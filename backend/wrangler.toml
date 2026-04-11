@@ -1,0 +1,13 @@
+name = "examops-backend"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# D1 数据库绑定 — 把 database_id 替换成你 `wrangler d1 create examops` 后得到的 ID
+[[d1_databases]]
+binding = "DB"
+database_name = "examops"
+database_id = "5ea7ea54-1fba-44bd-b2d3-bd9dbcc4fd86"
+
+# OpenAI API Key 通过 secret 注入，不写在这里
+# 设置命令: wrangler secret put OPENAI_API_KEY
+

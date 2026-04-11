@@ -1,0 +1,322 @@
+.App {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #f0f4f8;
+  color: #333;
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  flex: 1;
+}
+
+header.App-header {
+  background: linear-gradient(135deg, #0052d4, #4364f7);
+  color: #fff;
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+header.App-header h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+nav ul {
+  list-style: none;
+  display: flex;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+}
+
+nav ul {
+  display: flex;
+  gap: 0.5rem;
+}
+
+nav button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  position: relative;
+}
+
+nav button::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: #ffd700;
+  transition: width 0.3s ease;
+}
+
+nav button:hover::after {
+  width: 100%;
+}
+
+nav button:focus {
+  outline: none;
+}
+main {
+  max-width: 900px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+section {
+  background: #fff;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 10px 15px rgba(0,0,0,0.1);
+  transition: transform 0.3s ease;
+}
+
+section:hover {
+  transform: translateY(-5px);
+}
+
+.panel {
+  text-align: center;
+}
+
+button {
+  background: #0078d4;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+button:hover {
+  background: #005a9e;
+  transform: translateY(-2px);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+input[type=text], select, textarea, input[type=number], input[type=range] {
+  width: 100%;
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  margin-bottom: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: #0078d4;
+  outline: none;
+}
+
+.review-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.review-status span {
+  color: #888;
+}
+
+.review-status .arrow {
+  font-size: 0.7rem;
+  color: #bbb;
+}
+
+.review-status .status-active {
+  color: #0078d4;
+  font-weight: bold;
+}
+
+.action-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.btn-approve {
+  background: #28a745;
+}
+
+.btn-approve:hover {
+  background: #1e7e34;
+}
+
+.btn-approve:disabled {
+  background: #6c757d;
+  cursor: default;
+  transform: none;
+}
+
+.error {
+  color: #c0392b;
+  background: #fdecea;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+}
+
+.muted {
+  color: #888;
+  font-size: 0.85rem;
+}
+
+/* Usage badge */
+.usage-badge {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  z-index: 999;
+}
+
+.usage-badge strong {
+  color: #7ee8a2;
+}
+
+/* AI Edit box */
+.ai-edit-box {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #f0f7ff;
+  border: 1px solid #b3d4f5;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.btn-ai {
+  background: #6f42c1;
+  align-self: flex-start;
+}
+
+.btn-ai:hover {
+  background: #5a32a3;
+}
+
+.btn-ai:disabled {
+  background: #9e8abf;
+  cursor: default;
+  transform: none;
+}
+
+.btn-new {
+  background: #28a745;
+  margin-bottom: 1rem;
+}
+
+.btn-new:hover {
+  background: #1e7e34;
+}
+
+/* Question Bank */
+.bank-item {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.bank-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.btn-delete {
+  background: #dc3545;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+.btn-delete:hover {
+  background: #a71d2a;
+}
+
+/* Review two-column layout */
+.review-body {
+  display: flex;
+  gap: 2rem;
+  margin-top: 1rem;
+}
+
+.review-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.review-left textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.review-right {
+  width: 220px;
+  flex-shrink: 0;
+}
+
+.version-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+
+.version-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eee;
+  font-size: 0.85rem;
+}
+
+.version-list li button {
+  align-self: flex-start;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+  background: #e0e0e0;
+  color: #333;
+}
+
+.version-list li button:hover {
+  background: #c0c0c0;
+}
+
+footer {
+  text-align: center;
+  padding: 1rem;
+  background: #0052d4;
+  color: #fff;
+  margin-top: 2rem;
+}
+
