@@ -5,7 +5,7 @@ import './App.css';
 const API = 'https://examops-backend.moral-study-dh.workers.dev';
 
 const INITIAL = {
-  topic: '', objective: '', format: 'MCQ', difficulty: 5, numDistractors: 4,
+  topic: '', objective: '', distractorStyle: 'Common Mistakes', numDistractors: 4, sampleQuestions: '',
 };
 
 function App() {
@@ -14,9 +14,10 @@ function App() {
   // Form inputs
   const [topic, setTopic] = useState(INITIAL.topic);
   const [objective, setObjective] = useState(INITIAL.objective);
-  const [format, setFormat] = useState(INITIAL.format);
-  const [difficulty, setDifficulty] = useState(INITIAL.difficulty);
+  const format = 'MCQ';
+  const [distractorStyle, setDistractorStyle] = useState(INITIAL.distractorStyle);
   const [numDistractors, setNumDistractors] = useState(INITIAL.numDistractors);
+  const [sampleQuestions, setSampleQuestions] = useState(INITIAL.sampleQuestions);
 
   // Generated question
   const [question, setQuestion] = useState(null);
@@ -57,9 +58,9 @@ function App() {
   const resetAll = () => {
     setTopic(INITIAL.topic);
     setObjective(INITIAL.objective);
-    setFormat(INITIAL.format);
-    setDifficulty(INITIAL.difficulty);
+    setDistractorStyle(INITIAL.distractorStyle);
     setNumDistractors(INITIAL.numDistractors);
+    setSampleQuestions(INITIAL.sampleQuestions);
     setQuestion(null);
     setQuestionId(null);
     setEditText('');
@@ -84,7 +85,7 @@ function App() {
     try {
       const res = await fetch(`${API}/api/questions?in_bank=true`);
       const data = await res.json();
-      setBankQuestions(data);
+      setBankQuestions(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Failed to load bank', e);
     }
@@ -113,7 +114,7 @@ function App() {
       const res = await fetch(`${API}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, objective, format, difficulty, num_distractors: numDistractors }),
+        body: JSON.stringify({ topic, objective, format, distractor_style: distractorStyle, num_distractors: numDistractors, sample_questions: sampleQuestions }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -134,7 +135,7 @@ function App() {
       const res = await fetch(`${API}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, objective, format, difficulty, num_distractors: numDistractors }),
+        body: JSON.stringify({ topic, objective, format, distractor_style: distractorStyle, num_distractors: numDistractors, sample_questions: sampleQuestions }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -155,7 +156,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          topic, objective, format, difficulty,
+          topic, objective, format, distractor_style: distractorStyle,
           num_distractors: numDistractors,
           question_text: question.question_text,
           options: question.options,
@@ -289,21 +290,24 @@ function App() {
                 <input type="text" value={objective} onChange={e => setObjective(e.target.value)}
                   placeholder="e.g. Solve using the quadratic formula" />
               </label><br />
-              <label>Question Format<br />
-                <select value={format} onChange={e => setFormat(e.target.value)}>
-                  <option>MCQ</option>
-                  <option>Select Multiple</option>
-                  <option>Free Response</option>
+              <label>Distractor Style<br />
+                <select value={distractorStyle} onChange={e => setDistractorStyle(e.target.value)}>
+                  <option value="Straightforward">Straightforward — obvious wrong answers (e.g. x = 10 when answer is 2)</option>
+                  <option value="Common Mistakes">Common Mistakes — based on typical errors (e.g. wrong sign, dropped term)</option>
+                  <option value="Tricky">Tricky — nearly correct, easy to confuse (e.g. x = 3 vs x = −3)</option>
                 </select>
-              </label><br />
-              <label>Difficulty<br />
-                <input type="range" min="1" max="10" value={difficulty}
-                  onChange={e => setDifficulty(Number(e.target.value))} />
-                <span> {difficulty}</span>
               </label><br />
               <label>Number of distractors<br />
                 <input type="number" min="1" max="5" value={numDistractors}
                   onChange={e => setNumDistractors(Number(e.target.value))} />
+              </label><br />
+              <label>Sample Questions <span style={{ fontWeight: 'normal', color: '#888' }}>(optional — paste 1–3 past questions to guide the style)</span><br />
+                <textarea
+                  value={sampleQuestions}
+                  onChange={e => setSampleQuestions(e.target.value)}
+                  rows={5}
+                  placeholder={"e.g.\nQ: What is the solution to x^2 - 5x + 6 = 0?\nA) x = 2 or x = 3\nB) x = 1 or x = 6\n..."}
+                />
               </label><br />
               <button type="submit" disabled={loading}>
                 {loading ? 'Generating...' : 'Generate Draft Question'}
@@ -320,16 +324,14 @@ function App() {
             {question && (
               <div className="question">
                 <p>{question.question_text}</p>
-                {format !== 'Free Response' && (
-                  <ul>
-                    {question.options.map((opt, i) => (
-                      <li key={i}>
-                        <input type={format === 'Select Multiple' ? 'checkbox' : 'radio'} name="option" readOnly />
-                        {' '}{opt.text}{opt.is_correct && <strong> ✓</strong>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <ul>
+                  {question.options.map((opt, i) => (
+                    <li key={i}>
+                      <input type="radio" name="option" readOnly />
+                      {' '}{opt.text}{opt.is_correct && <strong> ✓</strong>}
+                    </li>
+                  ))}
+                </ul>
                 <details>
                   <summary>AI Explanation</summary>
                   <p>{question.explanation}</p>
@@ -434,8 +436,7 @@ function App() {
                 <div key={q.id} className="bank-item">
                   <div className="bank-meta">
                     <span>{q.topic}</span>
-                    <span>{q.format}</span>
-                    <span>Difficulty: {q.difficulty}</span>
+                    <span>Distractor: {q.difficulty}</span>
                   </div>
                   <p>{q.question_text}</p>
                   {q.options && q.options.length > 0 && (

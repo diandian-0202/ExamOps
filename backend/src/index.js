@@ -51,28 +51,34 @@ async function incrementAndCheck(db) {
  * Call GPT-4o mini to generate a middle/high school math question.
  * Returns parsed { question_text, options, explanation } or throws.
  */
-async function generateWithAI(env, { topic, objective, format, difficulty, numDistractors }) {
-  await incrementAndCheck(env.DB);
-  const level = difficulty <= 4 ? 'middle school' : 'high school';
+const DISTRACTOR_INSTRUCTIONS = {
+  'Straightforward': 'Wrong answer choices should be obviously incorrect — simple random numbers or clearly unrelated values. The correct answer should stand out easily.',
+  'Common Mistakes': 'Wrong answer choices should reflect typical student errors, such as sign mistakes, dropped terms, arithmetic errors, or applying the wrong formula step.',
+  'Tricky': 'Wrong answer choices should be very close to the correct answer and hard to distinguish — for example, off by a sign, a missing negative, a swapped root, or a plausible but incorrect simplification.',
+};
 
-  const formatInstructions =
-    format === 'Free Response'
-      ? 'For Free Response, "options" must be an empty array [].'
-      : format === 'Select Multiple'
-      ? `For Select Multiple, mark ALL correct answers with "is_correct": true. Provide exactly ${numDistractors + 1} options total.`
-      : `For MCQ, exactly ONE option must have "is_correct": true. Provide exactly ${numDistractors + 1} options total.`;
+async function generateWithAI(env, { topic, objective, distractorStyle, numDistractors, sampleQuestions }) {
+  await incrementAndCheck(env.DB);
+
+  const distractorGuide = DISTRACTOR_INSTRUCTIONS[distractorStyle] || DISTRACTOR_INSTRUCTIONS['Common Mistakes'];
 
   const systemPrompt =
     'You are an expert math teacher specializing in middle school and high school mathematics. ' +
     'You create clear, accurate math exam questions. ' +
     'Always respond with valid JSON only — no markdown fences, no text outside the JSON object.';
 
+  const samplesSection = sampleQuestions && sampleQuestions.trim()
+    ? `Here are sample questions that represent the desired style — generate a NEW question similar in structure and tone:\n${sampleQuestions.trim()}\n\n`
+    : '';
+
   const userPrompt =
-    `Create a ${format} math exam question for ${level} students.\n` +
+    `Create an MCQ math exam question.\n` +
     `Math topic: ${topic}\n` +
-    `Learning objective: ${objective || 'Test understanding of ' + topic}\n` +
-    `Difficulty: ${difficulty}/10 (1 = very easy, 10 = very hard)\n\n` +
-    `${formatInstructions}\n\n` +
+    `Learning objective: ${objective || 'Test understanding of ' + topic}\n\n` +
+    samplesSection +
+    `Distractor style: ${distractorStyle}\n` +
+    `${distractorGuide}\n\n` +
+    `Provide exactly ${numDistractors + 1} options total. Exactly ONE must have "is_correct": true.\n\n` +
     `Use this exact JSON structure:\n` +
     `{\n` +
     `  "question_text": "The full question. For equations use plain text like x^2 + 3x - 4 = 0",\n` +
@@ -170,24 +176,19 @@ export default {
       // ── POST /api/generate ──────────────────────────────────────────────────
       if (method === 'POST' && pathname === '/api/generate') {
         const body = await request.json();
-        const { topic, objective = '', format = 'MCQ', difficulty = 5, num_distractors = 4 } = body;
+        const { topic, objective = '', distractor_style = 'Common Mistakes', num_distractors = 4, sample_questions = '' } = body;
 
         if (!topic) return err('topic is required');
 
         const aiResult = await generateWithAI(env, {
           topic,
           objective,
-          format,
-          difficulty: Number(difficulty),
+          distractorStyle: distractor_style,
           numDistractors: Number(num_distractors),
+          sampleQuestions: sample_questions,
         });
 
-        return json({
-          ...aiResult,
-          options: aiResult.options,
-          // Also return the config so the frontend can save it with the question
-          config: { topic, objective, format, difficulty, num_distractors },
-        });
+        return json({ ...aiResult, options: aiResult.options });
       }
 
       // ── POST /api/generate/variants ─────────────────────────────────────────
@@ -207,8 +208,7 @@ export default {
           const aiResult = await generateWithAI(env, {
             topic: original.topic,
             objective: original.objective || '',
-            format: original.format,
-            difficulty: original.difficulty,
+            distractorStyle: original.difficulty || 'Common Mistakes',
             numDistractors: original.num_distractors,
           });
           variants.push(aiResult);
@@ -254,7 +254,7 @@ export default {
           topic,
           objective = '',
           format = 'MCQ',
-          difficulty = 5,
+          distractor_style = 'Common Mistakes',
           num_distractors = 4,
           question_text = '',
           options = [],
@@ -273,7 +273,7 @@ export default {
             topic,
             objective,
             format,
-            Number(difficulty),
+            distractor_style,
             Number(num_distractors),
             question_text,
             JSON.stringify(options),
@@ -395,7 +395,7 @@ export default {
             `Current options:\n${currentOptions.map((o, i) => `${i + 1}. ${o.text}${o.is_correct ? ' (correct)' : ''}`).join('\n')}\n\n` +
             `Current explanation:\n${current.explanation}\n\n` +
             `Instructor instructions: ${instruction}\n\n` +
-            `Keep the same format (${current.format}) and similar difficulty (${current.difficulty}/10).\n` +
+            `Keep the same format (MCQ) and distractor style (${current.difficulty || 'Common Mistakes'}).\n` +
             `Respond with ONLY this JSON:\n` +
             `{\n` +
             `  "question_text": "...",\n` +
