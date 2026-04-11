@@ -438,6 +438,15 @@ function App() {
                     <span>Difficulty: {q.difficulty}</span>
                   </div>
                   <p>{q.question_text}</p>
+                  {q.options && q.options.length > 0 && (
+                    <ul style={{ marginBottom: '0.5rem' }}>
+                      {q.options.map((opt, i) => (
+                        <li key={i} style={{ color: opt.is_correct ? '#28a745' : 'inherit', fontWeight: opt.is_correct ? 'bold' : 'normal' }}>
+                          {opt.text} {opt.is_correct && '✓'}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <button className="btn-delete" onClick={() => handleDeleteFromBank(q.id)}>Delete</button>
                 </div>
               ))
