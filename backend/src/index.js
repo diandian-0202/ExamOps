@@ -51,33 +51,46 @@ async function incrementAndCheck(db) {
  * Call GPT-4o mini to generate a middle/high school math question.
  * Returns parsed { question_text, options, explanation } or throws.
  */
-const DISTRACTOR_INSTRUCTIONS = {
-  'Straightforward': 'Wrong answer choices should be obviously incorrect — simple random numbers or clearly unrelated values. The correct answer should stand out easily.',
-  'Common Mistakes': 'Wrong answer choices should reflect typical student errors, such as sign mistakes, dropped terms, arithmetic errors, or applying the wrong formula step.',
-  'Tricky': 'Wrong answer choices should be very close to the correct answer and hard to distinguish — for example, off by a sign, a missing negative, a swapped root, or a plausible but incorrect simplification.',
-};
+/** Retrieve top K chunks from course_chunks by keyword overlap with topic */
+async function retrieveChunks(db, classId, topic, k = 4) {
+  if (!classId) return [];
+  const { results } = await db
+    .prepare('SELECT content FROM course_chunks WHERE class_id = ?')
+    .bind(classId)
+    .all();
+  if (!results.length) return [];
 
-async function generateWithAI(env, { topic, objective, distractorStyle, numDistractors, sampleQuestions }) {
+  const keywords = topic.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const scored = results.map(row => {
+    const text = row.content.toLowerCase();
+    const score = keywords.reduce((s, kw) => s + (text.split(kw).length - 1), 0);
+    return { content: row.content, score };
+  });
+  return scored
+    .filter(r => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k)
+    .map(r => r.content);
+}
+
+async function generateWithAI(env, { topic, objective, numDistractors, classId }) {
   await incrementAndCheck(env.DB);
 
-  const distractorGuide = DISTRACTOR_INSTRUCTIONS[distractorStyle] || DISTRACTOR_INSTRUCTIONS['Common Mistakes'];
-
-  const systemPrompt =
-    'You are an expert math teacher specializing in middle school and high school mathematics. ' +
-    'You create clear, accurate math exam questions. ' +
-    'Always respond with valid JSON only — no markdown fences, no text outside the JSON object.';
-
-  const samplesSection = sampleQuestions && sampleQuestions.trim()
-    ? `Here are sample questions that represent the desired style — generate a NEW question similar in structure and tone:\n${sampleQuestions.trim()}\n\n`
+  const chunks = await retrieveChunks(env.DB, classId, topic);
+  const courseContext = chunks.length
+    ? `Here is relevant course material to base the question on:\n\n${chunks.join('\n\n---\n\n')}\n\n`
     : '';
 
+  const systemPrompt =
+    'You are an expert CS and math exam question writer. ' +
+    'When course material is provided, base your question strictly on that content. ' +
+    'Always respond with valid JSON only — no markdown fences, no text outside the JSON object.';
+
   const userPrompt =
-    `Create an MCQ math exam question.\n` +
-    `Math topic: ${topic}\n` +
+    `Create an MCQ exam question.\n` +
+    `Topic: ${topic}\n` +
     `Learning objective: ${objective || 'Test understanding of ' + topic}\n\n` +
-    samplesSection +
-    `Distractor style: ${distractorStyle}\n` +
-    `${distractorGuide}\n\n` +
+    courseContext +
     `Provide exactly ${numDistractors + 1} options total. Exactly ONE must have "is_correct": true.\n\n` +
     `Use this exact JSON structure:\n` +
     `{\n` +
@@ -176,16 +189,15 @@ export default {
       // ── POST /api/generate ──────────────────────────────────────────────────
       if (method === 'POST' && pathname === '/api/generate') {
         const body = await request.json();
-        const { topic, objective = '', distractor_style = 'Common Mistakes', num_distractors = 4, sample_questions = '' } = body;
+        const { topic, objective = '', num_distractors = 4, class_id = null } = body;
 
         if (!topic) return err('topic is required');
 
         const aiResult = await generateWithAI(env, {
           topic,
           objective,
-          distractorStyle: distractor_style,
           numDistractors: Number(num_distractors),
-          sampleQuestions: sample_questions,
+          classId: class_id ? Number(class_id) : null,
         });
 
         return json({ ...aiResult, options: aiResult.options });
@@ -208,13 +220,18 @@ export default {
           const aiResult = await generateWithAI(env, {
             topic: original.topic,
             objective: original.objective || '',
-            distractorStyle: original.difficulty || 'Common Mistakes',
             numDistractors: original.num_distractors,
           });
           variants.push(aiResult);
         }
 
         return json({ variants });
+      }
+
+      // ── GET /api/classes ───────────────────────────────────────────────────
+      if (method === 'GET' && pathname === '/api/classes') {
+        const { results } = await env.DB.prepare('SELECT * FROM classes ORDER BY id').all();
+        return json(results);
       }
 
       // ── GET /api/usage ──────────────────────────────────────────────────────
@@ -254,31 +271,31 @@ export default {
           topic,
           objective = '',
           format = 'MCQ',
-          distractor_style = 'Common Mistakes',
           num_distractors = 4,
           question_text = '',
           options = [],
           explanation = '',
           status = 'draft',
+          class_id = null,
         } = body;
 
         if (!topic) return err('topic is required');
 
         const result = await env.DB.prepare(
           `INSERT INTO questions
-             (topic, objective, format, difficulty, num_distractors, question_text, options, explanation, status)
+             (topic, objective, format, num_distractors, question_text, options, explanation, status, class_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
           .bind(
             topic,
             objective,
             format,
-            distractor_style,
             Number(num_distractors),
             question_text,
             JSON.stringify(options),
             explanation,
-            status
+            status,
+            class_id ? Number(class_id) : null
           )
           .run();
 
@@ -395,7 +412,7 @@ export default {
             `Current options:\n${currentOptions.map((o, i) => `${i + 1}. ${o.text}${o.is_correct ? ' (correct)' : ''}`).join('\n')}\n\n` +
             `Current explanation:\n${current.explanation}\n\n` +
             `Instructor instructions: ${instruction}\n\n` +
-            `Keep the same format (MCQ) and distractor style (${current.difficulty || 'Common Mistakes'}).\n` +
+            `Keep the same MCQ format.\n` +
             `Respond with ONLY this JSON:\n` +
             `{\n` +
             `  "question_text": "...",\n` +

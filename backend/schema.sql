@@ -1,18 +1,30 @@
--- ExamOps D1 数据库 Schema
--- 初始化命令: wrangler d1 execute examops --file=schema.sql
+-- ExamOps D1 Schema
+
+CREATE TABLE IF NOT EXISTS classes (
+  id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE
+);
+INSERT OR IGNORE INTO classes (id, name) VALUES (1, 'EECS 485'), (2, 'EECS 370');
+
+CREATE TABLE IF NOT EXISTS course_chunks (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  class_id INTEGER NOT NULL REFERENCES classes(id),
+  content  TEXT    NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS questions (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  class_id        INTEGER REFERENCES classes(id),
   topic           TEXT    NOT NULL,
   objective       TEXT,
-  format          TEXT    NOT NULL DEFAULT 'MCQ',   -- MCQ | Select Multiple | Free Response
-  difficulty      INTEGER DEFAULT 5,
+  format          TEXT    NOT NULL DEFAULT 'MCQ',
+  difficulty      TEXT    DEFAULT 'Common Mistakes',
   num_distractors INTEGER DEFAULT 4,
   question_text   TEXT,
-  options         TEXT,        -- JSON: [{"text":"...","is_correct":true}, ...]
+  options         TEXT,
   explanation     TEXT,
-  status          TEXT    DEFAULT 'draft',           -- draft | reviewed | approved
-  in_bank         INTEGER DEFAULT 0,                 -- 0 = false, 1 = true
+  status          TEXT    DEFAULT 'draft',
+  in_bank         INTEGER DEFAULT 0,
   created_at      TEXT    DEFAULT (datetime('now')),
   updated_at      TEXT    DEFAULT (datetime('now'))
 );
@@ -29,10 +41,11 @@ CREATE TABLE IF NOT EXISTS question_versions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_versions_question ON question_versions(question_id);
-CREATE INDEX IF NOT EXISTS idx_questions_status   ON questions(status);
-CREATE INDEX IF NOT EXISTS idx_questions_bank     ON questions(in_bank);
+CREATE INDEX IF NOT EXISTS idx_questions_status  ON questions(status);
+CREATE INDEX IF NOT EXISTS idx_questions_bank    ON questions(in_bank);
+CREATE INDEX IF NOT EXISTS idx_questions_class   ON questions(class_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_class      ON course_chunks(class_id);
 
--- API 调用计数（单行，id 固定为 1）
 CREATE TABLE IF NOT EXISTS api_usage (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
   call_count INTEGER DEFAULT 0

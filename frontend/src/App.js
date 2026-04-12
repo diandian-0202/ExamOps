@@ -5,19 +5,21 @@ import './App.css';
 const API = 'https://examops-backend.moral-study-dh.workers.dev';
 
 const INITIAL = {
-  topic: '', objective: '', distractorStyle: 'Common Mistakes', numDistractors: 4, sampleQuestions: '',
+  topic: '', objective: '', numDistractors: 4,
 };
 
 function App() {
   const [view, setView] = useState('dashboard');
 
+  // Classes
+  const [classes, setClasses] = useState([]);
+  const [selectedClass, setSelectedClass] = useState(null); // { id, name }
+
   // Form inputs
   const [topic, setTopic] = useState(INITIAL.topic);
   const [objective, setObjective] = useState(INITIAL.objective);
   const format = 'MCQ';
-  const [distractorStyle, setDistractorStyle] = useState(INITIAL.distractorStyle);
   const [numDistractors, setNumDistractors] = useState(INITIAL.numDistractors);
-  const [sampleQuestions, setSampleQuestions] = useState(INITIAL.sampleQuestions);
 
   // Generated question
   const [question, setQuestion] = useState(null);
@@ -35,13 +37,17 @@ function App() {
 
   // Question bank
   const [bankQuestions, setBankQuestions] = useState([]);
+  const [bankClassFilter, setBankClassFilter] = useState(null); // null = all
 
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [usage, setUsage] = useState({ used: 0, limit: 500, remaining: 500 });
 
-  useEffect(() => { fetchUsage(); }, []);
+  useEffect(() => {
+    fetchUsage();
+    fetchClasses();
+  }, []);
 
   const fetchUsage = async () => {
     try {
@@ -53,14 +59,22 @@ function App() {
     }
   };
 
+  const fetchClasses = async () => {
+    try {
+      const res = await fetch(`${API}/api/classes`);
+      const data = await res.json();
+      if (Array.isArray(data)) setClasses(data);
+    } catch (e) {
+      console.error('Failed to fetch classes', e);
+    }
+  };
+
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
   const resetAll = () => {
     setTopic(INITIAL.topic);
     setObjective(INITIAL.objective);
-    setDistractorStyle(INITIAL.distractorStyle);
     setNumDistractors(INITIAL.numDistractors);
-    setSampleQuestions(INITIAL.sampleQuestions);
     setQuestion(null);
     setQuestionId(null);
     setEditText('');
@@ -114,7 +128,11 @@ function App() {
       const res = await fetch(`${API}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, objective, format, distractor_style: distractorStyle, num_distractors: numDistractors, sample_questions: sampleQuestions }),
+        body: JSON.stringify({
+          topic, objective, format,
+          num_distractors: numDistractors,
+          class_id: selectedClass?.id ?? null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -135,7 +153,11 @@ function App() {
       const res = await fetch(`${API}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, objective, format, distractor_style: distractorStyle, num_distractors: numDistractors, sample_questions: sampleQuestions }),
+        body: JSON.stringify({
+          topic, objective, format,
+          num_distractors: numDistractors,
+          class_id: selectedClass?.id ?? null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -156,11 +178,12 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          topic, objective, format, distractor_style: distractorStyle,
+          topic, objective, format,
           num_distractors: numDistractors,
           question_text: question.question_text,
           options: question.options,
           explanation: question.explanation,
+          class_id: selectedClass?.id ?? null,
         }),
       });
       const data = await res.json();
@@ -282,32 +305,31 @@ function App() {
             <h2>Configure Question Generation</h2>
             {error && <p className="error">{error}</p>}
             <form onSubmit={e => { e.preventDefault(); handleGenerate(); }}>
-              <label>Course / Lecture Topic<br />
+              <label>Class<br />
+                <select
+                  value={selectedClass?.id ?? ''}
+                  onChange={e => {
+                    const cls = classes.find(c => c.id === Number(e.target.value));
+                    setSelectedClass(cls ?? null);
+                  }}
+                >
+                  <option value=''>— No class (general) —</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </label><br />
+              <label>Topic<br />
                 <input type="text" value={topic} onChange={e => setTopic(e.target.value)}
-                  placeholder="e.g. Quadratic Equations" />
+                  placeholder="e.g. TCP congestion control" />
               </label><br />
               <label>Learning Objective<br />
                 <input type="text" value={objective} onChange={e => setObjective(e.target.value)}
-                  placeholder="e.g. Solve using the quadratic formula" />
-              </label><br />
-              <label>Distractor Style<br />
-                <select value={distractorStyle} onChange={e => setDistractorStyle(e.target.value)}>
-                  <option value="Straightforward">Straightforward — obvious wrong answers (e.g. x = 10 when answer is 2)</option>
-                  <option value="Common Mistakes">Common Mistakes — based on typical errors (e.g. wrong sign, dropped term)</option>
-                  <option value="Tricky">Tricky — nearly correct, easy to confuse (e.g. x = 3 vs x = −3)</option>
-                </select>
+                  placeholder="e.g. Explain how the congestion window shrinks when packets are dropped" />
               </label><br />
               <label>Number of distractors<br />
                 <input type="number" min="1" max="5" value={numDistractors}
                   onChange={e => setNumDistractors(Number(e.target.value))} />
-              </label><br />
-              <label>Sample Questions <span style={{ fontWeight: 'normal', color: '#888' }}>(optional — paste 1–3 past questions to guide the style)</span><br />
-                <textarea
-                  value={sampleQuestions}
-                  onChange={e => setSampleQuestions(e.target.value)}
-                  rows={5}
-                  placeholder={"e.g.\nQ: What is the solution to x^2 - 5x + 6 = 0?\nA) x = 2 or x = 3\nB) x = 1 or x = 6\n..."}
-                />
               </label><br />
               <button type="submit" disabled={loading}>
                 {loading ? 'Generating...' : 'Generate Draft Question'}
@@ -386,14 +408,13 @@ function App() {
                   <button className="btn-approve" onClick={handleApprove}>Approve</button>
                 </div>
 
-                {/* AI Edit section */}
                 <div className="ai-edit-box">
                   <label><strong>Ask AI to revise</strong></label>
                   <textarea
                     value={aiInstruction}
                     onChange={e => setAiInstruction(e.target.value)}
                     rows={3}
-                    placeholder="e.g. Make the question harder, or change the topic to geometry"
+                    placeholder="e.g. Make the distractors more similar to the correct answer"
                   />
                   <button className="btn-ai" onClick={handleAIEdit} disabled={aiEditing || !aiInstruction.trim()}>
                     {aiEditing ? 'AI is revising...' : 'Apply AI Edit'}
@@ -422,21 +443,61 @@ function App() {
           </section>
         );
 
-      case 'bank':
+      case 'bank': {
+        // Group questions by class
+        const classMap = {};
+        bankQuestions.forEach(q => {
+          const key = q.class_id ?? 0;
+          if (!classMap[key]) classMap[key] = [];
+          classMap[key].push(q);
+        });
+
+        const getClassName = (id) => {
+          if (!id) return 'General';
+          return classes.find(c => c.id === id)?.name ?? `Class ${id}`;
+        };
+
+        const folders = Object.keys(classMap).sort((a, b) => Number(a) - Number(b));
+        const filtered = bankClassFilter !== null
+          ? bankQuestions.filter(q => (q.class_id ?? 0) === bankClassFilter)
+          : bankQuestions;
+
         return (
           <section id="bank">
             <h2>Question Bank</h2>
             {error && <p className="error">{error}</p>}
             <button className="btn-new" onClick={() => { resetAll(); setView('generation'); }}>
-              + Start to Generate a New Question
+              + Generate a New Question
             </button>
-            {bankQuestions.length === 0
+
+            {/* Folder tabs */}
+            {folders.length > 0 && (
+              <div className="bank-tabs">
+                <button
+                  className={bankClassFilter === null ? 'tab-active' : ''}
+                  onClick={() => setBankClassFilter(null)}
+                >
+                  All ({bankQuestions.length})
+                </button>
+                {folders.map(key => (
+                  <button
+                    key={key}
+                    className={bankClassFilter === Number(key) ? 'tab-active' : ''}
+                    onClick={() => setBankClassFilter(Number(key))}
+                  >
+                    {getClassName(Number(key))} ({classMap[key].length})
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {filtered.length === 0
               ? <p className="muted" style={{ marginTop: '1rem' }}>No approved questions yet.</p>
-              : bankQuestions.map(q => (
+              : filtered.map(q => (
                 <div key={q.id} className="bank-item">
                   <div className="bank-meta">
+                    <span className="bank-class-tag">{getClassName(q.class_id)}</span>
                     <span>{q.topic}</span>
-                    <span>Distractor: {q.difficulty}</span>
                   </div>
                   <p>{q.question_text}</p>
                   {q.options && q.options.length > 0 && (
@@ -454,6 +515,7 @@ function App() {
             }
           </section>
         );
+      }
 
       default:
         return null;
