@@ -82,8 +82,9 @@ async function generateWithAI(env, { topic, objective, numDistractors, classId }
     : '';
 
   const systemPrompt =
-    'You are an expert CS and math exam question writer. ' +
+    'You are an expert CS exam question writer. ' +
     'When course material is provided, base your question strictly on that content. ' +
+    'The questions should be of similar difficulty as previous semesters unless specified otherwise. ' +
     'Always respond with valid JSON only — no markdown fences, no text outside the JSON object.';
 
   const userPrompt =
