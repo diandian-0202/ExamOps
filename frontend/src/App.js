@@ -1,7 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
+import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from 'mammoth';
 import './App.css';
 
-// const API = 'http://localhost:8787'; // 本地开发
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
+//const API = 'http://localhost:8787'; // 本地开发
 const API = 'https://examops-backend.moral-study-dh.workers.dev';
 
 const INITIAL = {
@@ -38,6 +43,10 @@ function App() {
   // Question bank
   const [bankQuestions, setBankQuestions] = useState([]);
   const [bankClassFilter, setBankClassFilter] = useState(null); // null = all
+
+  // Class manager
+  const [newClassName, setNewClassName] = useState('');
+  const [uploadStatus, setUploadStatus] = useState({}); // { [classId]: {state, message} }
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -104,6 +113,62 @@ function App() {
       console.error('Failed to load bank', e);
     }
   }, []);
+
+  // ── Class manager helpers ─────────────────────────────────────────────────
+
+  const handleAddClass = async () => {
+    if (!newClassName.trim()) return;
+    try {
+      const res = await fetch(`${API}/api/classes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newClassName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setClasses(prev => [...prev, data]);
+      setNewClassName('');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const extractTextFromFile = async (file) => {
+    const buffer = await file.arrayBuffer();
+    if (file.name.endsWith('.pdf')) {
+      const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+      const pages = await Promise.all(
+        Array.from({ length: pdf.numPages }, (_, i) =>
+          pdf.getPage(i + 1).then(p => p.getTextContent()).then(tc =>
+            tc.items.map(it => it.str).join(' ')
+          )
+        )
+      );
+      return pages.join('\n');
+    } else if (file.name.endsWith('.docx')) {
+      const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+      return result.value;
+    }
+    throw new Error('Unsupported file type. Please upload a PDF or DOCX.');
+  };
+
+  const handleFileUpload = async (classId, file, source) => {
+    setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: `Parsing ${file.name}...` } }));
+    try {
+      const text = await extractTextFromFile(file);
+      setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: 'Uploading to database...' } }));
+      const res = await fetch(`${API}/api/classes/${classId}/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, source, filename: file.name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setUploadStatus(prev => ({ ...prev, [classId]: { state: 'done', message: `✓ ${data.chunks_added} chunks added from "${file.name}"` } }));
+    } catch (e) {
+      setUploadStatus(prev => ({ ...prev, [classId]: { state: 'error', message: `Error: ${e.message}` } }));
+    }
+  };
 
   const enterReview = (saved) => {
     setEditText(saved.question_text);
@@ -296,6 +361,73 @@ function App() {
           <section id="dashboard" className="panel">
             <h2>Instructor Dashboard</h2>
             <button onClick={() => setView('generation')}>Generate Question with AI</button>
+          </section>
+        );
+
+      case 'classes':
+        return (
+          <section id="classes">
+            <h2>Manage Classes</h2>
+            {error && <p className="error">{error}</p>}
+
+            {/* Add new class */}
+            <div className="class-add-box">
+              <h3>Add New Class</h3>
+              <div className="action-row">
+                <input
+                  type="text"
+                  value={newClassName}
+                  onChange={e => setNewClassName(e.target.value)}
+                  placeholder="e.g. EECS 281"
+                  onKeyDown={e => e.key === 'Enter' && handleAddClass()}
+                />
+                <button onClick={handleAddClass} disabled={!newClassName.trim()}>Add Class</button>
+              </div>
+            </div>
+
+            {/* Existing classes */}
+            <h3 style={{ marginTop: '2rem' }}>Existing Classes</h3>
+            {classes.length === 0
+              ? <p className="muted">No classes yet.</p>
+              : classes.map(cls => (
+                <div key={cls.id} className="class-card">
+                  <h4>{cls.name}</h4>
+
+                  <div className="upload-row">
+                    <label className="upload-label">
+                      Upload Lecture Slide
+                      <input type="file" accept=".pdf,.docx" style={{ display: 'none' }}
+                        onChange={e => {
+                          const file = e.target.files[0];
+                          if (file) handleFileUpload(cls.id, file, 'lecture');
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <label className="upload-label">
+                      Upload Exam / Solution
+                      <input type="file" accept=".pdf,.docx" style={{ display: 'none' }}
+                        onChange={e => {
+                          const file = e.target.files[0];
+                          if (file) handleFileUpload(cls.id, file, 'exam');
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  {uploadStatus[cls.id] && (
+                    <p className={
+                      uploadStatus[cls.id].state === 'done' ? 'upload-done' :
+                      uploadStatus[cls.id].state === 'error' ? 'error' : 'muted'
+                    }>
+                      {uploadStatus[cls.id].message}
+                    </p>
+                  )}
+                </div>
+              ))
+            }
           </section>
         );
 
@@ -533,6 +665,7 @@ function App() {
             <li><button onClick={() => setView('ai-question')}>AI Question</button></li>
             <li><button onClick={() => setView('review')}>Review</button></li>
             <li><button onClick={() => { fetchBank(); setView('bank'); }}>Question Bank</button></li>
+            <li><button onClick={() => { setError(''); setView('classes'); }}>Manage Classes</button></li>
           </ul>
         </nav>
       </header>

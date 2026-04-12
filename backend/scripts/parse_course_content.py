@@ -1,8 +1,13 @@
 """
 parse_course_content.py
 -----------------------
-Parses course exam PDFs and DOCX files from the /exam folder,
+Parses lecture PDFs and exam PDFs/DOCXs from backend/exam+lecture/,
 chunks the text, and writes seed_chunks.sql for D1 import.
+
+Each chunk is tagged with:
+  - class_id  : which course (1 = EECS 485, 2 = EECS 370)
+  - source    : 'lecture' or 'exam'
+  - topic_tag : lecture topic extracted from filename (e.g. 'Networking')
 
 Usage:
     pip install pypdf python-docx
@@ -12,11 +17,11 @@ Output:
     backend/seed_chunks.sql  (overwritten each run)
 
 To add a new course or file:
-    1. Drop the PDF/DOCX into backend/exam/
-    2. Add an entry to COURSE_FILES below
-    3. Re-run this script
-    4. Run:  npm run db:seed          (local)
-             npm run db:seed:remote   (Cloudflare)
+    1. Drop PDF/DOCX into backend/exam+lecture/
+    2. Add an entry to EXAM_FILES or adjust LECTURE_PREFIX below
+    3. Re-run this script, then:
+         npm run db:seed          (local)
+         npm run db:seed:remote   (Cloudflare)
 """
 
 import re
@@ -34,17 +39,28 @@ except ImportError:
     sys.exit("Missing python-docx — run: pip install python-docx")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-# Each entry: (class_id, class_name, filename)
-# class_id must match what's in the classes table (see schema.sql)
 
-EXAM_DIR = os.path.join(os.path.dirname(__file__), '..', 'exam')
-OUTPUT   = os.path.join(os.path.dirname(__file__), '..', 'seed_chunks.sql')
+COURSE_DIR = os.path.join(os.path.dirname(__file__), '..', 'exam+lecture')
+OUTPUT     = os.path.join(os.path.dirname(__file__), '..', 'seed_chunks.sql')
 
-COURSE_FILES = [
-    (1, 'EECS 485', 'eecs485f25_final_solutions.pdf'),
-    (1, 'EECS 485', 'eecs485f25_midterm_solutions.pdf'),
-    (2, 'EECS 370', '370 F24 Final Solutions v2 (Public).docx'),
-    (2, 'EECS 370', '370Midterm F24 - Answer Key.docx'),
+# Classes: id → name
+CLASSES = {
+    1: 'EECS 485',
+    2: 'EECS 370',
+}
+
+# Lecture PDFs are auto-detected by filename pattern: NN_Topic_Name.pdf
+# They all belong to EECS 485 (class_id = 1)
+LECTURE_CLASS_ID = 1
+
+# Exam files: (class_id, filename)
+EXAM_FILES = [
+    (1, 'eecs485f25_final_solutions.pdf'),
+    (1, 'eecs485f25_midterm_solutions.pdf'),
+    (1, 'eecs485w25_final_solutions.pdf'),
+    (1, 'eecs485w25_midterm_solutions.pdf'),
+    (2, '370 F24 Final Solutions v2 (Public).docx'),
+    (2, '370Midterm F24 - Answer Key.docx'),
 ]
 
 # ── Extraction ────────────────────────────────────────────────────────────────
@@ -82,9 +98,9 @@ def clean(text):
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-# ── Chunking (sliding window over words) ──────────────────────────────────────
+# ── Chunking (sliding window) ─────────────────────────────────────────────────
 
-def sliding_chunks(text, size=600, step=400, min_len=100):
+def sliding_chunks(text, size=500, step=350, min_len=80):
     words = text.split()
     chunks = []
     i = 0
@@ -95,64 +111,92 @@ def sliding_chunks(text, size=600, step=400, min_len=100):
         i += step
     return chunks
 
-# ── SQL escaping ──────────────────────────────────────────────────────────────
+# ── SQL helpers ───────────────────────────────────────────────────────────────
 
 def esc(s):
     return s.replace("'", "''")
 
+def sql_val(v):
+    if v is None:
+        return 'NULL'
+    return f"'{esc(str(v))}'"
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # Collect unique class ids and names
-    class_defs = {}
-    for class_id, class_name, _ in COURSE_FILES:
-        class_defs[class_id] = class_name
+    all_chunks = []  # list of (class_id, source, topic_tag, content)
 
-    all_chunks = []  # list of (class_id, chunk_text)
+    # ── 1. Auto-detect lecture PDFs (pattern: NN_Topic_Name.pdf) ─────────────
+    lecture_pattern = re.compile(r'^(\d+)[_ ](.+)\.pdf$')
+    lecture_files = []
+    for fname in sorted(os.listdir(COURSE_DIR)):
+        m = lecture_pattern.match(fname)
+        if m:
+            topic_tag = m.group(2).replace('_', ' ').replace('-', ' ').strip()
+            lecture_files.append((fname, topic_tag))
 
-    for class_id, class_name, filename in COURSE_FILES:
-        path = os.path.join(EXAM_DIR, filename)
-        if not os.path.exists(path):
-            print(f"  WARNING: file not found, skipping — {filename}")
-            continue
-        print(f"  Parsing {filename} ...", end=' ')
-        raw = extract(path)
-        cleaned = clean(raw)
-        chunks = sliding_chunks(cleaned)
-        all_chunks.extend((class_id, c) for c in chunks)
+    print(f"Found {len(lecture_files)} lecture PDFs:")
+    for fname, tag in lecture_files:
+        path = os.path.join(COURSE_DIR, fname)
+        print(f"  [{tag}] {fname} ...", end=' ')
+        raw = clean(extract(path))
+        chunks = sliding_chunks(raw)
+        for c in chunks:
+            all_chunks.append((LECTURE_CLASS_ID, 'lecture', tag, c))
         print(f"{len(chunks)} chunks")
 
-    # Build SQL
+    # ── 2. Exam files ─────────────────────────────────────────────────────────
+    print(f"\nProcessing {len(EXAM_FILES)} exam files:")
+    for class_id, fname in EXAM_FILES:
+        path = os.path.join(COURSE_DIR, fname)
+        if not os.path.exists(path):
+            print(f"  WARNING: not found, skipping — {fname}")
+            continue
+        print(f"  [exam] {fname} ...", end=' ')
+        raw = clean(extract(path))
+        chunks = sliding_chunks(raw)
+        for c in chunks:
+            all_chunks.append((class_id, 'exam', None, c))
+        print(f"{len(chunks)} chunks")
+
+    # ── 3. Write SQL ──────────────────────────────────────────────────────────
     lines = [
         '-- Auto-generated by scripts/parse_course_content.py',
         '-- DO NOT edit manually — re-run the script instead.',
         '',
     ]
 
-    # Classes
-    class_values = ', '.join(f"({cid}, '{cname}')" for cid, cname in class_defs.items())
+    class_values = ', '.join(f"({cid}, '{name}')" for cid, name in CLASSES.items())
     lines.append(f"INSERT OR IGNORE INTO classes (id, name) VALUES {class_values};")
     lines.append('')
-
-    # Delete old chunks so re-runs don't duplicate
     lines.append('DELETE FROM course_chunks;')
     lines.append('')
 
-    # Chunks
-    for class_id, chunk in all_chunks:
-        lines.append(f"INSERT INTO course_chunks (class_id, content) VALUES ({class_id}, '{esc(chunk)}');")
+    lecture_count = sum(1 for c in all_chunks if c[1] == 'lecture')
+    exam_count    = sum(1 for c in all_chunks if c[1] == 'exam')
+
+    for class_id, source, topic_tag, content in all_chunks:
+        lines.append(
+            f"INSERT INTO course_chunks (class_id, source, topic_tag, content) "
+            f"VALUES ({class_id}, '{source}', {sql_val(topic_tag)}, '{esc(content)}');"
+        )
 
     sql = '\n'.join(lines)
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         f.write(sql)
 
-    print(f"\nDone. {len(all_chunks)} total chunks written to seed_chunks.sql")
+    print(f"\nDone.")
+    print(f"  Lecture chunks : {lecture_count}")
+    print(f"  Exam chunks    : {exam_count}")
+    print(f"  Total          : {len(all_chunks)}")
+    print(f"  Written to     : {os.path.abspath(OUTPUT)}")
+    print()
     print("Next steps:")
     print("  Local:      npm run db:seed")
     print("  Cloudflare: npm run db:seed:remote")
 
 if __name__ == '__main__':
-    print(f"Exam directory: {os.path.abspath(EXAM_DIR)}")
-    print(f"Output file:    {os.path.abspath(OUTPUT)}")
+    print(f"Course dir: {os.path.abspath(COURSE_DIR)}")
+    print(f"Output:     {os.path.abspath(OUTPUT)}")
     print()
     main()

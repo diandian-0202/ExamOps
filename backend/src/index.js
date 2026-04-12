@@ -51,17 +51,9 @@ async function incrementAndCheck(db) {
  * Call GPT-4o mini to generate a middle/high school math question.
  * Returns parsed { question_text, options, explanation } or throws.
  */
-/** Retrieve top K chunks from course_chunks by keyword overlap with topic */
-async function retrieveChunks(db, classId, topic, k = 4) {
-  if (!classId) return [];
-  const { results } = await db
-    .prepare('SELECT content FROM course_chunks WHERE class_id = ?')
-    .bind(classId)
-    .all();
-  if (!results.length) return [];
-
-  const keywords = topic.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-  const scored = results.map(row => {
+/** Score chunks by keyword overlap with topic, return top k */
+function scoreAndPick(rows, keywords, k) {
+  const scored = rows.map(row => {
     const text = row.content.toLowerCase();
     const score = keywords.reduce((s, kw) => s + (text.split(kw).length - 1), 0);
     return { content: row.content, score };
@@ -73,34 +65,60 @@ async function retrieveChunks(db, classId, topic, k = 4) {
     .map(r => r.content);
 }
 
+/** Retrieve lecture chunks and exam example chunks separately */
+async function retrieveChunks(db, classId, topic) {
+  if (!classId) return { lectureChunks: [], examChunks: [] };
+
+  const keywords = topic.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+
+  const { results: lectureRows } = await db
+    .prepare("SELECT content FROM course_chunks WHERE class_id = ? AND source = 'lecture'")
+    .bind(classId).all();
+
+  const { results: examRows } = await db
+    .prepare("SELECT content FROM course_chunks WHERE class_id = ? AND source = 'exam'")
+    .bind(classId).all();
+
+  return {
+    lectureChunks: scoreAndPick(lectureRows, keywords, 4),
+    examChunks:    scoreAndPick(examRows,    keywords, 2),
+  };
+}
+
 async function generateWithAI(env, { topic, objective, numDistractors, classId }) {
   await incrementAndCheck(env.DB);
 
-  const chunks = await retrieveChunks(env.DB, classId, topic);
-  const courseContext = chunks.length
-    ? `Here is relevant course material to base the question on:\n\n${chunks.join('\n\n---\n\n')}\n\n`
+  const { lectureChunks, examChunks } = await retrieveChunks(env.DB, classId, topic);
+
+  const lectureContext = lectureChunks.length
+    ? `=== Relevant Lecture Notes ===\n${lectureChunks.join('\n\n---\n\n')}\n\n`
+    : '';
+
+  const examContext = examChunks.length
+    ? `=== Example Exam Questions (match this difficulty and style) ===\n${examChunks.join('\n\n---\n\n')}\n\n`
     : '';
 
   const systemPrompt =
     'You are an expert CS exam question writer. ' +
-    'When course material is provided, base your question strictly on that content. ' +
-    'The questions should be of similar difficulty as previous semesters unless specified otherwise. ' +
+    'When lecture notes are provided, base your question strictly on that content — do not invent facts. ' +
+    'When example exam questions are provided, match their difficulty level and question style. ' +
     'Always respond with valid JSON only — no markdown fences, no text outside the JSON object.';
 
   const userPrompt =
-    `Create an MCQ exam question.\n` +
+    `Create an MCQ exam question on the following topic.\n` +
     `Topic: ${topic}\n` +
     `Learning objective: ${objective || 'Test understanding of ' + topic}\n\n` +
-    courseContext +
+    lectureContext +
+    examContext +
     `Provide exactly ${numDistractors + 1} options total. Exactly ONE must have "is_correct": true.\n\n` +
     `Use this exact JSON structure:\n` +
     `{\n` +
-    `  "question_text": "The full question. For equations use plain text like x^2 + 3x - 4 = 0",\n` +
+    `  "question_text": "The full question",\n` +
     `  "options": [\n` +
     `    {"text": "answer choice", "is_correct": true},\n` +
     `    {"text": "answer choice", "is_correct": false}\n` +
     `  ],\n` +
-    `  "explanation": "Step-by-step solution showing how to reach the correct answer."\n` +
+    `  "explanation": "Step-by-step explanation of why the correct answer is right."\n` +
     `}`;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -141,6 +159,18 @@ async function generateWithAI(env, { topic, objective, numDistractors, classId }
   if (!parsed.explanation) parsed.explanation = '';
 
   return parsed;
+}
+
+// ─── Text chunking (mirrors Python script logic) ───────────────────────────────
+
+function chunkText(text, size = 500, step = 350) {
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  const chunks = [];
+  for (let i = 0; i < words.length; i += step) {
+    const chunk = words.slice(i, i + size).join(' ');
+    if (chunk.length >= 80) chunks.push(chunk);
+  }
+  return chunks;
 }
 
 // ─── DB helpers ────────────────────────────────────────────────────────────────
@@ -233,6 +263,41 @@ export default {
       if (method === 'GET' && pathname === '/api/classes') {
         const { results } = await env.DB.prepare('SELECT * FROM classes ORDER BY id').all();
         return json(results);
+      }
+
+      // ── POST /api/classes ──────────────────────────────────────────────────
+      if (method === 'POST' && pathname === '/api/classes') {
+        const { name } = await request.json();
+        if (!name || !name.trim()) return err('name is required');
+        const existing = await env.DB.prepare('SELECT id FROM classes WHERE name = ?').bind(name.trim()).first();
+        if (existing) return err('A class with this name already exists', 409);
+        const result = await env.DB.prepare('INSERT INTO classes (name) VALUES (?)').bind(name.trim()).run();
+        const newClass = await env.DB.prepare('SELECT * FROM classes WHERE id = ?').bind(result.meta.last_row_id).first();
+        return json(newClass, 201);
+      }
+
+      // ── POST /api/classes/:id/upload ───────────────────────────────────────
+      const classUploadMatch = pathname.match(/^\/api\/classes\/(\d+)\/upload$/);
+      if (method === 'POST' && classUploadMatch) {
+        const classId = parseInt(classUploadMatch[1], 10);
+        const cls = await env.DB.prepare('SELECT id FROM classes WHERE id = ?').bind(classId).first();
+        if (!cls) return err('Class not found', 404);
+
+        const { text, source = 'lecture', filename = '' } = await request.json();
+        if (!text || !text.trim()) return err('text is required');
+
+        const topicTag = filename
+          ? filename.replace(/\.\w+$/, '').replace(/[_-]/g, ' ').replace(/^\d+\s*/, '').trim()
+          : null;
+
+        const chunks = chunkText(text);
+        for (const chunk of chunks) {
+          await env.DB.prepare(
+            'INSERT INTO course_chunks (class_id, source, topic_tag, content) VALUES (?, ?, ?, ?)'
+          ).bind(classId, source, topicTag || null, chunk).run();
+        }
+
+        return json({ chunks_added: chunks.length, source, topic_tag: topicTag });
       }
 
       // ── GET /api/usage ──────────────────────────────────────────────────────

@@ -7,9 +7,11 @@ CREATE TABLE IF NOT EXISTS classes (
 INSERT OR IGNORE INTO classes (id, name) VALUES (1, 'EECS 485'), (2, 'EECS 370');
 
 CREATE TABLE IF NOT EXISTS course_chunks (
-  id       INTEGER PRIMARY KEY AUTOINCREMENT,
-  class_id INTEGER NOT NULL REFERENCES classes(id),
-  content  TEXT    NOT NULL
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  class_id  INTEGER NOT NULL REFERENCES classes(id),
+  source    TEXT    DEFAULT 'lecture',  -- 'lecture' or 'exam'
+  topic_tag TEXT,                       -- e.g. 'Networking', 'MapReduce'
+  content   TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS questions (
