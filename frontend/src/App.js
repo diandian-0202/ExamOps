@@ -13,6 +13,11 @@ const INITIAL = {
   topic: '', objective: '', numDistractors: 4,
 };
 
+const CLASS_DESCRIPTIONS = {
+  'EECS 485': 'Web Systems — covers web infrastructure, search engines, social networks, and large-scale data processing.',
+  'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
+};
+
 function App() {
   const [view, setView] = useState('dashboard');
 
@@ -72,7 +77,10 @@ function App() {
     try {
       const res = await fetch(`${API}/api/classes`);
       const data = await res.json();
-      if (Array.isArray(data)) setClasses(data);
+      if (Array.isArray(data)) {
+        setClasses(data);
+        if (data.length > 0) setSelectedClass(prev => prev ?? data[0]);
+      }
     } catch (e) {
       console.error('Failed to fetch classes', e);
     }
@@ -450,7 +458,13 @@ function App() {
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
-              </label><br />
+              </label>
+              {selectedClass && CLASS_DESCRIPTIONS[selectedClass.name] && (
+                <p className="muted" style={{ marginTop: '-0.5rem', marginBottom: '1rem' }}>
+                  {CLASS_DESCRIPTIONS[selectedClass.name]}
+                </p>
+              )}
+              <br />
               <label>Topic<br />
                 <input type="text" value={topic} onChange={e => setTopic(e.target.value)}
                   placeholder="e.g. TCP congestion control" />
@@ -662,8 +676,8 @@ function App() {
           <ul>
             <li><button onClick={() => setView('dashboard')}>Dashboard</button></li>
             <li><button onClick={() => setView('generation')}>Generate</button></li>
-            <li><button onClick={() => setView('ai-question')}>AI Question</button></li>
-            <li><button onClick={() => setView('review')}>Review</button></li>
+            <li><button onClick={() => setView('ai-question')} disabled={!question} title={!question ? 'Generate a question first' : ''}>AI Question</button></li>
+            <li><button onClick={() => setView('review')} disabled={!questionId} title={!questionId ? 'Save a question to review first' : ''}>Review</button></li>
             <li><button onClick={() => { fetchBank(); setView('bank'); }}>Question Bank</button></li>
             <li><button onClick={() => { setError(''); setView('classes'); }}>Manage Classes</button></li>
           </ul>

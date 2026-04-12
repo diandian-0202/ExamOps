@@ -67,6 +67,16 @@ nav button:hover::after {
 nav button:focus {
   outline: none;
 }
+
+nav button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+nav button:disabled::after {
+  display: none;
+}
 main {
   max-width: 900px;
   margin: 2rem auto;
