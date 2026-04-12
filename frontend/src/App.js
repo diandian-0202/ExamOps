@@ -18,6 +18,21 @@ const CLASS_DESCRIPTIONS = {
   'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
 };
 
+const CLASS_PLACEHOLDERS = {
+  'EECS 485': {
+    topic: 'e.g. PageRank algorithm',
+    objective: 'e.g. Explain how PageRank iteratively computes importance scores using link structure',
+  },
+  'EECS 370': {
+    topic: 'e.g. Pipeline hazards',
+    objective: 'e.g. Explain how data hazards are resolved using forwarding in a 5-stage pipeline',
+  },
+  default: {
+    topic: 'e.g. TCP congestion control',
+    objective: 'e.g. Explain how the congestion window shrinks when packets are dropped',
+  },
+};
+
 function App() {
   const [view, setView] = useState('dashboard');
 
@@ -467,11 +482,11 @@ function App() {
               <br />
               <label>Topic<br />
                 <input type="text" value={topic} onChange={e => setTopic(e.target.value)}
-                  placeholder="e.g. TCP congestion control" />
+                  placeholder={(CLASS_PLACEHOLDERS[selectedClass?.name] ?? CLASS_PLACEHOLDERS.default).topic} />
               </label><br />
               <label>Learning Objective<br />
                 <input type="text" value={objective} onChange={e => setObjective(e.target.value)}
-                  placeholder="e.g. Explain how the congestion window shrinks when packets are dropped" />
+                  placeholder={(CLASS_PLACEHOLDERS[selectedClass?.name] ?? CLASS_PLACEHOLDERS.default).objective} />
               </label><br />
               <label>Number of distractors<br />
                 <input type="number" min="1" max="5" value={numDistractors}
