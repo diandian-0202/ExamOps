@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { flushSync } from 'react-dom';
 import * as pdfjsLib from 'pdfjs-dist';
-import mammoth from 'mammoth';
+import mammoth from 'mammoth/mammoth.browser';
 import './App.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
