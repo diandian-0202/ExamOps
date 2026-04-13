@@ -165,7 +165,7 @@ function App() {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const tc = await page.getTextContent();
-        texts.push(tc.items.map(it => it.str).join(' '));
+        texts.push(tc.items.filter(it => 'str' in it).map(it => it.str).join(' '));
         if (onProgress) onProgress(Math.round((i / pdf.numPages) * 100));
       }
       const result = texts.join('\n');
