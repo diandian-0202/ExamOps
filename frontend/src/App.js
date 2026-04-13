@@ -5,7 +5,7 @@ import mammoth from 'mammoth/mammoth.browser';
 import './App.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
-  `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+  `${process.env.PUBLIC_URL}/pdf.worker.min.mjs`;
 
 //const API = 'http://localhost:8787'; // 本地开发
 const API = 'https://examops-backend.moral-study-dh.workers.dev';
@@ -15,7 +15,7 @@ const INITIAL = {
 };
 
 const CLASS_DESCRIPTIONS = {
-  'EECS 485': 'Web Systems — covers web infrastructure, search engines, social networks, and large-scale data processing.',
+  'EECS 485': 'Web System2 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
   'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
 };
 
