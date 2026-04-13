@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { flushSync } from 'react-dom';
 import * as pdfjsLib from 'pdfjs-dist';
-import mammoth from 'mammoth/mammoth.browser';
+import mammoth from 'mammoth';
 import './App.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -15,7 +15,7 @@ const INITIAL = {
 };
 
 const CLASS_DESCRIPTIONS = {
-  'EECS 485': 'Web System2 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
+  'EECS 485': 'Web System3 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
   'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
 };
 
@@ -163,9 +163,13 @@ function App() {
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
       const texts = [];
       for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const tc = await page.getTextContent();
-        texts.push(tc.items.filter(it => 'str' in it).map(it => it.str).join(' '));
+        try {
+          const page = await pdf.getPage(i);
+          const tc = await page.getTextContent();
+          texts.push(tc.items.filter(it => 'str' in it).map(it => it.str).join(' '));
+        } catch (pageErr) {
+          console.warn(`Skipping page ${i}:`, pageErr);
+        }
         if (onProgress) onProgress(Math.round((i / pdf.numPages) * 100));
       }
       const result = texts.join('\n');
