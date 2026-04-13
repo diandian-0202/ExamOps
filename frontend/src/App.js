@@ -156,20 +156,23 @@ function App() {
     }
   };
 
-  const extractTextFromFile = async (file) => {
+  const extractTextFromFile = async (file, onProgress) => {
     const buffer = await file.arrayBuffer();
     if (file.name.endsWith('.pdf')) {
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-      const pages = await Promise.all(
-        Array.from({ length: pdf.numPages }, (_, i) =>
-          pdf.getPage(i + 1).then(p => p.getTextContent()).then(tc =>
-            tc.items.map(it => it.str).join(' ')
-          )
-        )
-      );
-      return pages.join('\n');
+      const texts = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        if (onProgress) onProgress(`Parsing page ${i} of ${pdf.numPages}...`);
+        const page = await pdf.getPage(i);
+        const tc = await page.getTextContent();
+        texts.push(tc.items.map(it => it.str).join(' '));
+      }
+      const result = texts.join('\n');
+      if (!result.trim()) throw new Error('No text found — this may be a scanned/image-based PDF with no text layer.');
+      return result;
     } else if (file.name.endsWith('.docx')) {
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+      if (!result.value.trim()) throw new Error('No text found in the DOCX file.');
       return result.value;
     }
     throw new Error('Unsupported file type. Please upload a PDF or DOCX.');
@@ -178,7 +181,9 @@ function App() {
   const handleFileUpload = async (classId, file, source) => {
     setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: `Parsing ${file.name}...` } }));
     try {
-      const text = await extractTextFromFile(file);
+      const text = await extractTextFromFile(file, (msg) => {
+        setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: msg } }));
+      });
       setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: 'Uploading to database...' } }));
       const res = await fetch(`${API}/api/classes/${classId}/upload`, {
         method: 'POST',
