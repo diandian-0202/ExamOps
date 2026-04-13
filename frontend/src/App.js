@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
+import { flushSync } from 'react-dom';
 import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import './App.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
-  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 //const API = 'http://localhost:8787'; // 本地开发
 const API = 'https://examops-backend.moral-study-dh.workers.dev';
@@ -162,40 +163,56 @@ function App() {
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
       const texts = [];
       for (let i = 1; i <= pdf.numPages; i++) {
-        if (onProgress) onProgress(`Parsing page ${i} of ${pdf.numPages}...`);
         const page = await pdf.getPage(i);
         const tc = await page.getTextContent();
         texts.push(tc.items.map(it => it.str).join(' '));
+        if (onProgress) onProgress(Math.round((i / pdf.numPages) * 100));
       }
       const result = texts.join('\n');
       if (!result.trim()) throw new Error('No text found — this may be a scanned/image-based PDF with no text layer.');
-      return result;
+      return { text: result, pages: pdf.numPages };
     } else if (file.name.endsWith('.docx')) {
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
       if (!result.value.trim()) throw new Error('No text found in the DOCX file.');
-      return result.value;
+      return { text: result.value, pages: null };
     }
     throw new Error('Unsupported file type. Please upload a PDF or DOCX.');
   };
 
-  const handleFileUpload = async (classId, file, source) => {
-    setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: `Parsing ${file.name}...` } }));
-    try {
-      const text = await extractTextFromFile(file, (msg) => {
-        setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: msg } }));
+  const handleFileUpload = async (classId, files, source) => {
+    const fileList = Array.from(files);
+    let totalChunks = 0;
+    for (let fi = 0; fi < fileList.length; fi++) {
+      const file = fileList[fi];
+      const prefix = fileList.length > 1 ? `[${fi + 1}/${fileList.length}] ` : '';
+      flushSync(() => {
+        setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: `${prefix}Parsing "${file.name}"...`, percent: 0 } }));
       });
-      setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: 'Uploading to database...' } }));
-      const res = await fetch(`${API}/api/classes/${classId}/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, source, filename: file.name }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setUploadStatus(prev => ({ ...prev, [classId]: { state: 'done', message: `✓ ${data.chunks_added} chunks added from "${file.name}"` } }));
-    } catch (e) {
-      setUploadStatus(prev => ({ ...prev, [classId]: { state: 'error', message: `Error: ${e.message}` } }));
+      try {
+        const { text, pages } = await extractTextFromFile(file, (percent) => {
+          flushSync(() => {
+            setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: `${prefix}Parsing... ${percent}%`, percent } }));
+          });
+        });
+        const parsedMsg = pages ? `${prefix}✓ Parsed ${pages} pages. Uploading...` : `${prefix}✓ Parsed. Uploading...`;
+        setUploadStatus(prev => ({ ...prev, [classId]: { state: 'uploading', message: parsedMsg, percent: null } }));
+        const res = await fetch(`${API}/api/classes/${classId}/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, source, filename: file.name }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        totalChunks += data.chunks_added;
+      } catch (e) {
+        setUploadStatus(prev => ({ ...prev, [classId]: { state: 'error', message: `${prefix}Error: ${e.message}` } }));
+        return;
+      }
     }
+    const summary = fileList.length > 1
+      ? `✓ ${fileList.length} files uploaded, ${totalChunks} chunks added`
+      : `✓ ${totalChunks} chunks added from "${fileList[0].name}"`;
+    setUploadStatus(prev => ({ ...prev, [classId]: { state: 'done', message: summary } }));
   };
 
   const enterReview = (saved) => {
@@ -424,10 +441,9 @@ function App() {
                   <div className="upload-row">
                     <label className="upload-label">
                       Upload Lecture Slide
-                      <input type="file" accept=".pdf,.docx" style={{ display: 'none' }}
+                      <input type="file" accept=".pdf,.docx" multiple style={{ display: 'none' }}
                         onChange={e => {
-                          const file = e.target.files[0];
-                          if (file) handleFileUpload(cls.id, file, 'lecture');
+                          if (e.target.files.length > 0) handleFileUpload(cls.id, e.target.files, 'lecture');
                           e.target.value = '';
                         }}
                       />
@@ -435,10 +451,9 @@ function App() {
 
                     <label className="upload-label">
                       Upload Exam / Solution
-                      <input type="file" accept=".pdf,.docx" style={{ display: 'none' }}
+                      <input type="file" accept=".pdf,.docx" multiple style={{ display: 'none' }}
                         onChange={e => {
-                          const file = e.target.files[0];
-                          if (file) handleFileUpload(cls.id, file, 'exam');
+                          if (e.target.files.length > 0) handleFileUpload(cls.id, e.target.files, 'exam');
                           e.target.value = '';
                         }}
                       />
@@ -446,12 +461,19 @@ function App() {
                   </div>
 
                   {uploadStatus[cls.id] && (
-                    <p className={
-                      uploadStatus[cls.id].state === 'done' ? 'upload-done' :
-                      uploadStatus[cls.id].state === 'error' ? 'error' : 'muted'
-                    }>
-                      {uploadStatus[cls.id].message}
-                    </p>
+                    <div>
+                      <p className={
+                        uploadStatus[cls.id].state === 'done' ? 'upload-done' :
+                        uploadStatus[cls.id].state === 'error' ? 'error' : 'muted'
+                      } style={{ marginBottom: '0.25rem' }}>
+                        {uploadStatus[cls.id].message}
+                      </p>
+                      {uploadStatus[cls.id].state === 'uploading' && uploadStatus[cls.id].percent != null && (
+                        <div className="progress-bar-wrap">
+                          <div className="progress-bar-fill" style={{ width: `${uploadStatus[cls.id].percent}%` }} />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ))
