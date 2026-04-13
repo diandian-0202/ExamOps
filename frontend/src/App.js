@@ -15,7 +15,7 @@ const INITIAL = {
 };
 
 const CLASS_DESCRIPTIONS = {
-  'EECS 485': 'Web System2 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
+  'EECS 485': 'Web System5 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
   'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
 };
 
@@ -162,18 +162,23 @@ function App() {
     if (file.name.endsWith('.pdf')) {
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
       const texts = [];
+      let lastPageErr = null;
       for (let i = 1; i <= pdf.numPages; i++) {
         try {
           const page = await pdf.getPage(i);
           const tc = await page.getTextContent();
           texts.push(tc.items.filter(it => 'str' in it).map(it => it.str).join(' '));
         } catch (pageErr) {
-          console.warn(`Skipping page ${i}:`, pageErr);
+          lastPageErr = pageErr;
+          console.error(`[PDF page ${i} error]`, pageErr);
         }
         if (onProgress) onProgress(Math.round((i / pdf.numPages) * 100));
       }
       const result = texts.join('\n');
-      if (!result.trim()) throw new Error('No text found — this may be a scanned/image-based PDF with no text layer.');
+      if (!result.trim()) {
+        if (lastPageErr) throw lastPageErr;
+        throw new Error('No text found — this may be a scanned/image-based PDF with no text layer.');
+      }
       return { text: result, pages: pdf.numPages };
     } else if (file.name.endsWith('.docx')) {
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
@@ -209,6 +214,7 @@ function App() {
         if (!res.ok) throw new Error(data.error);
         totalChunks += data.chunks_added;
       } catch (e) {
+        console.error(`[Upload error] file=${file.name}`, e);
         setUploadStatus(prev => ({ ...prev, [classId]: { state: 'error', message: `${prefix}Error: ${e.message}` } }));
         return;
       }
