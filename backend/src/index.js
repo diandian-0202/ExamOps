@@ -276,6 +276,18 @@ export default {
         return json(newClass, 201);
       }
 
+      // ── DELETE /api/classes/:id ───────────────────────────────────────────
+      const classDeleteMatch = pathname.match(/^\/api\/classes\/(\d+)$/);
+      if (method === 'DELETE' && classDeleteMatch) {
+        const classId = parseInt(classDeleteMatch[1], 10);
+        const cls = await env.DB.prepare('SELECT id FROM classes WHERE id = ?').bind(classId).first();
+        if (!cls) return err('Class not found', 404);
+        await env.DB.prepare('DELETE FROM course_chunks WHERE class_id = ?').bind(classId).run();
+        await env.DB.prepare('DELETE FROM questions WHERE class_id = ?').bind(classId).run();
+        await env.DB.prepare('DELETE FROM classes WHERE id = ?').bind(classId).run();
+        return json({ success: true });
+      }
+
       // ── POST /api/classes/:id/upload ───────────────────────────────────────
       const classUploadMatch = pathname.match(/^\/api\/classes\/(\d+)\/upload$/);
       if (method === 'POST' && classUploadMatch) {

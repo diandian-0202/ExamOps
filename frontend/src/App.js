@@ -15,7 +15,7 @@ const INITIAL = {
 };
 
 const CLASS_DESCRIPTIONS = {
-  'EECS 485': 'Web System4 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
+  'EECS 485': 'Web System1 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
   'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
 };
 
@@ -446,7 +446,13 @@ function App() {
               ? <p className="muted">No classes yet.</p>
               : classes.map(cls => (
                 <div key={cls.id} className="class-card">
-                  <h4>{cls.name}</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h4 style={{ margin: 0 }}>{cls.name}</h4>
+                    <button className="btn-delete" onClick={async () => {
+                      await fetch(`${API}/api/classes/${cls.id}`, { method: 'DELETE' });
+                      setClasses(prev => prev.filter(c => c.id !== cls.id));
+                    }}>Delete</button>
+                  </div>
 
                   <div className="upload-row">
                     <label className="upload-label">
