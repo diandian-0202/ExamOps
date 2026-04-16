@@ -38,7 +38,7 @@ const DEFAULT_PROMPTS = {
 };
 
 const CLASS_DESCRIPTIONS = {
-  'EECS 485': 'Web System1 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
+  'EECS 485': 'Web System — covers web infrastructure, search engines, social networks, and large-scale data processing.',
   'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
 };
 
