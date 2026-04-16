@@ -9,9 +9,11 @@ INSERT OR IGNORE INTO classes (id, name) VALUES (1, 'EECS 485'), (2, 'EECS 370')
 CREATE TABLE IF NOT EXISTS course_chunks (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   class_id  INTEGER NOT NULL REFERENCES classes(id),
-  source    TEXT    DEFAULT 'lecture',  -- 'lecture' or 'exam'
-  topic_tag TEXT,                       -- e.g. 'Networking', 'MapReduce'
-  content   TEXT    NOT NULL
+  source    TEXT    DEFAULT 'lecture',
+  topic_tag TEXT,
+  content   TEXT    NOT NULL,
+  kc_id     INTEGER,                    -- matched knowledge component
+  kc_score  REAL    DEFAULT 0          -- keyword match score [0,1]
 );
 
 CREATE TABLE IF NOT EXISTS questions (
@@ -47,6 +49,26 @@ CREATE INDEX IF NOT EXISTS idx_questions_status  ON questions(status);
 CREATE INDEX IF NOT EXISTS idx_questions_bank    ON questions(in_bank);
 CREATE INDEX IF NOT EXISTS idx_questions_class   ON questions(class_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_class      ON course_chunks(class_id);
+
+CREATE TABLE IF NOT EXISTS knowledge_components (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  class_id    INTEGER NOT NULL REFERENCES classes(id),
+  name        TEXT    NOT NULL,
+  description TEXT    DEFAULT '',
+  aliases     TEXT    DEFAULT '[]',
+  created_at  TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS students (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  class_id     INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  name         TEXT    NOT NULL,
+  level        TEXT    NOT NULL DEFAULT 'average',
+  prompt       TEXT    DEFAULT '',
+  assigned_kcs TEXT    DEFAULT '[]',
+  created_at   TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_students_class ON students(class_id);
 
 CREATE TABLE IF NOT EXISTS api_usage (
   id         INTEGER PRIMARY KEY CHECK (id = 1),

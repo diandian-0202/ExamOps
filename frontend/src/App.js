@@ -14,6 +14,29 @@ const INITIAL = {
   topic: '', objective: '', numDistractors: 4,
 };
 
+// ── Student generation helpers ────────────────────────────────────────────────
+
+function distributeLevels(n) {
+  if (n <= 0) return [];
+  if (n === 1) return ['average'];
+  if (n === 2) return ['strong', 'weak'];
+  const strong = Math.max(1, Math.round(n * 0.2));
+  const weak   = Math.max(1, Math.round(n * 0.2));
+  const avg    = Math.max(0, n - strong - weak);
+  return [
+    ...Array(strong).fill('strong'),
+    ...Array(avg).fill('average'),
+    ...Array(weak).fill('weak'),
+  ];
+}
+
+
+const DEFAULT_PROMPTS = {
+  strong:  'You are a strong student with an excellent grasp of all course material. You answer questions confidently and correctly, and can explain advanced concepts clearly.',
+  average: 'You are an average student with a reasonable understanding of most course material. You answer correctly about two-thirds of the time and sometimes confuse related concepts.',
+  weak:    'You are a struggling student with limited understanding of the course material. You often confuse fundamental concepts and may guess on harder questions.',
+};
+
 const CLASS_DESCRIPTIONS = {
   'EECS 485': 'Web System1 — covers web infrastructure, search engines, social networks, and large-scale data processing.',
   'EECS 370': 'Introduction to Computer Organization — covers assembly, memory hierarchy, pipelines, and computer architecture.',
@@ -68,6 +91,20 @@ function App() {
   // Class manager
   const [newClassName, setNewClassName] = useState('');
   const [uploadStatus, setUploadStatus] = useState({}); // { [classId]: {state, message} }
+  const [kcDraft, setKcDraft] = useState({}); // { [classId]: { name, description, aliases } }
+
+  // Manage Students
+  const [studentClassId, setStudentClassId] = useState(null);
+  const [studentCount, setStudentCount] = useState(10);
+  const [studentPrompt, setStudentPrompt] = useState('');
+  const [students, setStudents] = useState({}); // { [classId]: [...] }
+  const [editingStudentId, setEditingStudentId] = useState(null);
+  const [studentEdits, setStudentEdits] = useState({});
+
+  // Difficulty Evaluation
+  const [evalResults, setEvalResults] = useState(null);
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [reviewDifficultyLabel, setReviewDifficultyLabel] = useState('');
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -116,6 +153,8 @@ function App() {
     setStatus('draft');
     setAiInstruction('');
     setError('');
+    setEvalResults(null);
+    setReviewDifficultyLabel('');
   };
 
   const fetchVersions = useCallback(async (id) => {
@@ -139,6 +178,109 @@ function App() {
   }, []);
 
   // ── Class manager helpers ─────────────────────────────────────────────────
+
+  const handleAddKC = async (classId) => {
+    const draft = kcDraft[classId] || {};
+    if (!draft.name?.trim()) return;
+    try {
+      const res = await fetch(`${API}/api/classes/${classId}/kc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: draft.name.trim(),
+          description: draft.description?.trim() || '',
+          aliases: draft.aliases ? draft.aliases.split(',').map(a => a.trim()).filter(Boolean) : [],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setClasses(prev => prev.map(c => c.id === classId ? { ...c, kcs: [...(c.kcs || []), data] } : c));
+      setKcDraft(prev => ({ ...prev, [classId]: { name: '', description: '', aliases: '' } }));
+    } catch (e) { setError(e.message); }
+  };
+
+  const handleDeleteKC = async (classId, kcId) => {
+    try {
+      await fetch(`${API}/api/classes/${classId}/kc/${kcId}`, { method: 'DELETE' });
+      setClasses(prev => prev.map(c => c.id === classId
+        ? { ...c, kcs: (c.kcs || []).filter(k => k.id !== kcId) } : c));
+    } catch (e) { setError(e.message); }
+  };
+
+  // ── Student handlers ──────────────────────────────────────────────────────
+
+  const fetchStudents = async (classId) => {
+    try {
+      const res = await fetch(`${API}/api/classes/${classId}/students`);
+      const data = await res.json();
+      setStudents(prev => ({ ...prev, [classId]: Array.isArray(data) ? data : [] }));
+    } catch (e) {
+      console.error('Failed to fetch students', e);
+    }
+  };
+
+  const handleGenerateStudents = async () => {
+    if (!studentClassId) return;
+    const levels = distributeLevels(studentCount);
+    const profiles = levels.map((level, i) => ({
+      name: `Student ${i + 1}`,
+      level,
+      prompt: studentPrompt.trim() || DEFAULT_PROMPTS[level],
+      assignedKnowledgeComponents: [], // instructor assigns KCs manually per student
+    }));
+    try {
+      const res = await fetch(`${API}/api/classes/${studentClassId}/students/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ students: profiles }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setStudents(prev => ({ ...prev, [studentClassId]: data }));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleSaveStudent = async (classId, studentId) => {
+    const s = (students[classId] || []).find(x => x.id === studentId);
+    if (!s) return;
+    const payload = {
+      name: studentEdits.name ?? s.name,
+      level: studentEdits.level ?? s.level,
+      prompt: studentEdits.prompt ?? s.prompt,
+      assignedKnowledgeComponents: studentEdits.assignedKnowledgeComponents ?? s.assigned_kcs,
+    };
+    try {
+      const res = await fetch(`${API}/api/classes/${classId}/students/${studentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setStudents(prev => ({
+        ...prev,
+        [classId]: prev[classId].map(x => x.id === studentId ? data : x),
+      }));
+      setEditingStudentId(null);
+      setStudentEdits({});
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleDeleteStudent = async (classId, studentId) => {
+    try {
+      await fetch(`${API}/api/classes/${classId}/students/${studentId}`, { method: 'DELETE' });
+      setStudents(prev => ({
+        ...prev,
+        [classId]: prev[classId].filter(x => x.id !== studentId),
+      }));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
 
   const handleAddClass = async () => {
     if (!newClassName.trim()) return;
@@ -191,6 +333,8 @@ function App() {
   const handleFileUpload = async (classId, files, source) => {
     const fileList = Array.from(files);
     let totalChunks = 0;
+    let allMappings = null;
+    let totalUnmatched = 0;
     for (let fi = 0; fi < fileList.length; fi++) {
       const file = fileList[fi];
       const prefix = fileList.length > 1 ? `[${fi + 1}/${fileList.length}] ` : '';
@@ -213,16 +357,31 @@ function App() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         totalChunks += data.chunks_added;
+        // Accumulate KC mappings across files
+        if (data.componentMappings?.length > 0) {
+          allMappings = allMappings || {};
+          for (const m of data.componentMappings) {
+            if (!allMappings[m.component]) allMappings[m.component] = 0;
+            allMappings[m.component] += m.matches.length;
+          }
+        }
+        if (data.unmatched) totalUnmatched += data.unmatched;
       } catch (e) {
         console.error(`[Upload error] file=${file.name}`, e);
         setUploadStatus(prev => ({ ...prev, [classId]: { state: 'error', message: `${prefix}Error: ${e.message}` } }));
         return;
       }
     }
-    const summary = fileList.length > 1
+    let summary = fileList.length > 1
       ? `✓ ${fileList.length} files uploaded, ${totalChunks} chunks added`
       : `✓ ${totalChunks} chunks added from "${fileList[0].name}"`;
+    if (allMappings && Object.keys(allMappings).length > 0) {
+      const kcSummary = Object.entries(allMappings).map(([k, v]) => `${k} (${v})`).join(', ');
+      summary += ` · Matched: ${kcSummary}`;
+      if (totalUnmatched > 0) summary += ` · Unmatched: ${totalUnmatched}`;
+    }
     setUploadStatus(prev => ({ ...prev, [classId]: { state: 'done', message: summary } }));
+    fetchClasses(); // 刷新 chunk_count
   };
 
   const enterReview = (saved) => {
@@ -257,12 +416,42 @@ function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setQuestion(data);
+      setEvalResults(null); // reset previous evaluation when new question generated
       setView('ai-question');
       fetchUsage();
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRunEvaluation = async () => {
+    if (!question || !selectedClass) return;
+    setEvalLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/api/evaluate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: {
+            question_text: question.question_text,
+            options: question.options,
+            topic,
+            objective,
+          },
+          classId: selectedClass.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setEvalResults(data);
+      fetchUsage();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setEvalLoading(false);
     }
   };
 
@@ -304,10 +493,12 @@ function App() {
           options: question.options,
           explanation: question.explanation,
           class_id: selectedClass?.id ?? null,
+          difficulty: evalResults?.difficultyLabel || 'Unrated',
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      setReviewDifficultyLabel(data.difficulty || evalResults?.difficultyLabel || 'Unrated');
       setQuestionId(data.id);
       enterReview(data);
     } catch (e) {
@@ -491,6 +682,53 @@ function App() {
                       )}
                     </div>
                   )}
+
+                  {/* Knowledge Components */}
+                  <div className="kc-section">
+                    <strong>Knowledge Components</strong>
+                    {(cls.kcs || []).length > 0 && (
+                      <ul className="kc-list">
+                        {(cls.kcs || []).map(kc => (
+                          <li key={kc.id} className="kc-item">
+                            <div className="kc-item-header">
+                              <span className="kc-name">
+                                {kc.name}
+                                {kc.chunk_count > 0 && (
+                                  <span style={{ color: '#28a745', marginLeft: '0.4rem', fontSize: '0.85rem' }}>
+                                    ✓ {kc.chunk_count} chunks
+                                  </span>
+                                )}
+                              </span>
+                              <button className="btn-delete" onClick={() => handleDeleteKC(cls.id, kc.id)}>✕</button>
+                            </div>
+                            {kc.description && <p className="muted" style={{ margin: '0.15rem 0' }}>{kc.description}</p>}
+                            {kc.aliases?.length > 0 && (
+                              <p className="muted" style={{ margin: 0 }}>
+                                Keywords: {kc.aliases.join(', ')}
+                              </p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="kc-add-form">
+                      <input type="text" placeholder="Component name (e.g. SQL JOIN)"
+                        value={kcDraft[cls.id]?.name || ''}
+                        onChange={e => setKcDraft(prev => ({ ...prev, [cls.id]: { ...prev[cls.id], name: e.target.value } }))}
+                      />
+                      <input type="text" placeholder="Description (optional)"
+                        value={kcDraft[cls.id]?.description || ''}
+                        onChange={e => setKcDraft(prev => ({ ...prev, [cls.id]: { ...prev[cls.id], description: e.target.value } }))}
+                      />
+                      <input type="text" placeholder="Aliases / keywords, comma-separated (optional)"
+                        value={kcDraft[cls.id]?.aliases || ''}
+                        onChange={e => setKcDraft(prev => ({ ...prev, [cls.id]: { ...prev[cls.id], aliases: e.target.value } }))}
+                      />
+                      <button onClick={() => handleAddKC(cls.id)} disabled={!kcDraft[cls.id]?.name?.trim()}>
+                        + Add Component
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ))
             }
@@ -563,8 +801,8 @@ function App() {
                   <p>{question.explanation}</p>
                 </details>
                 <div className="action-row">
-                  <button onClick={handleSaveAndReview} disabled={loading}>
-                    {loading ? 'Saving...' : 'Edit in Review'}
+                  <button onClick={() => setView('evaluation')} disabled={loading}>
+                    Eval Difficulty
                   </button>
                   <button onClick={handleRegenerate} disabled={loading}>
                     {loading ? 'Generating...' : 'Regenerate'}
@@ -585,6 +823,11 @@ function App() {
               <span className={status === 'draft' ? 'status-active' : ''}>Draft</span>
               <span className="arrow">▶</span>
               <span className={status === 'approved' ? 'status-active' : ''}>Approved</span>
+              {reviewDifficultyLabel && (
+                <span className={`difficulty-badge difficulty-${reviewDifficultyLabel}`} style={{ fontSize: '0.8rem', padding: '0.1rem 0.6rem', marginLeft: '0.5rem' }}>
+                  {reviewDifficultyLabel}
+                </span>
+              )}
             </div>
 
             <div className="review-body">
@@ -702,6 +945,11 @@ function App() {
                   <div className="bank-meta">
                     <span className="bank-class-tag">{getClassName(q.class_id)}</span>
                     <span>{q.topic}</span>
+                    {q.difficulty && !['Common Mistakes', 'Unrated', ''].includes(q.difficulty) && (
+                      <span className={`difficulty-badge difficulty-${q.difficulty}`} style={{ fontSize: '0.72rem', padding: '0.05rem 0.5rem' }}>
+                        {q.difficulty}
+                      </span>
+                    )}
                   </div>
                   <p>{q.question_text}</p>
                   {q.options && q.options.length > 0 && (
@@ -721,6 +969,237 @@ function App() {
         );
       }
 
+      case 'evaluation': {
+        const OUTCOME_LABEL = { correct: '✓ Correct', incorrect: '✗ Incorrect', unfamiliar: '~ Unfamiliar', error: '! Error' };
+        const OUTCOME_CLASS = { correct: 'outcome-correct', incorrect: 'outcome-incorrect', unfamiliar: 'outcome-unfamiliar', error: 'outcome-error' };
+
+        return (
+          <section id="evaluation">
+            <h2>Difficulty Evaluation</h2>
+            {error && <p className="error">{error}</p>}
+
+            {/* Question summary */}
+            <div className="eval-question-box">
+              <p className="muted" style={{ margin: '0 0 0.4rem' }}>
+                Topic: <strong>{topic || '—'}</strong>
+                {selectedClass && <span style={{ marginLeft: '1rem' }}>Class: <strong>{selectedClass.name}</strong></span>}
+              </p>
+              <p style={{ margin: 0 }}>{question.question_text}</p>
+            </div>
+
+            {/* Action buttons */}
+            <div className="action-row" style={{ marginBottom: '1.5rem' }}>
+              {selectedClass
+                ? (
+                  <button onClick={handleRunEvaluation} disabled={evalLoading}>
+                    {evalLoading ? 'Running simulation…' : 'Run Student Simulation'}
+                  </button>
+                )
+                : <p className="muted" style={{ margin: 0 }}>Select a class with students in the Generate step first.</p>
+              }
+              <button onClick={handleSaveAndReview} disabled={loading || evalLoading} className="btn-approve">
+                {loading ? 'Saving…' : evalResults ? `Save as ${evalResults.difficultyLabel} → Review` : 'Save & Review'}
+              </button>
+            </div>
+
+            {/* Results */}
+            {evalResults && (
+              <>
+                {/* Summary bar */}
+                <div className="eval-summary">
+                  <span className={`difficulty-badge difficulty-${evalResults.difficultyLabel}`}>
+                    {evalResults.difficultyLabel}
+                  </span>
+                  <div>
+                    <strong>{evalResults.correctCount} / {evalResults.total}</strong> students answered correctly
+                    <span className="muted" style={{ marginLeft: '0.5rem' }}>({evalResults.score}%)</span>
+                  </div>
+                  <div className="muted" style={{ fontSize: '0.85rem' }}>
+                    Easy ≥ 70% · Medium 30–69% · Hard &lt; 30%
+                  </div>
+                </div>
+
+                {/* Per-student rows */}
+                {evalResults.results.map(r => (
+                  <div key={r.studentId} className="eval-result-item">
+                    <div className="eval-result-left">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                        <strong>{r.studentName}</strong>
+                        <span className={`level-badge level-${r.level}`}>{r.level}</span>
+                        {r.familiar
+                          ? <span style={{ fontSize: '0.78rem', color: '#0052d4' }}>● familiar</span>
+                          : <span style={{ fontSize: '0.78rem', color: '#888' }}>○ unfamiliar</span>}
+                      </div>
+                      {r.assignedKCs.length > 0
+                        ? <div className="student-kc-tags">{r.assignedKCs.map(n => <span key={n} className="student-kc-tag">{n}</span>)}</div>
+                        : <span className="muted" style={{ fontSize: '0.8rem' }}>No KCs assigned</span>}
+                    </div>
+                    <div className="eval-result-right">
+                      <div className={`eval-outcome ${OUTCOME_CLASS[r.outcome] || ''}`}>
+                        {OUTCOME_LABEL[r.outcome] || r.outcome}
+                        {r.selected && r.selected !== '?' && <span className="muted" style={{ fontWeight: 'normal', marginLeft: '0.4rem' }}>(picked {r.selected})</span>}
+                      </div>
+                      <p className="muted" style={{ margin: '0.3rem 0 0', fontSize: '0.85rem' }}>{r.reasoning}</p>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </section>
+        );
+      }
+
+      case 'students': {
+        const cls = classes.find(c => c.id === studentClassId);
+        const kcs = cls?.kcs || [];
+        const studs = students[studentClassId] || [];
+        const strong  = studs.filter(s => s.level === 'strong').length;
+        const average = studs.filter(s => s.level === 'average').length;
+        const weak    = studs.filter(s => s.level === 'weak').length;
+
+        return (
+          <section id="students">
+            <h2>Manage Students</h2>
+            {error && <p className="error">{error}</p>}
+
+            <label>Class<br />
+              <select value={studentClassId ?? ''} onChange={e => {
+                const id = Number(e.target.value) || null;
+                setStudentClassId(id);
+                if (id) fetchStudents(id);
+              }}>
+                <option value="">— Select a class —</option>
+                {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+
+            {cls && (
+              <>
+                {kcs.length > 0
+                  ? <p className="muted" style={{ marginTop: '-0.5rem' }}>Available KCs: {kcs.map(k => k.name).join(', ')}</p>
+                  : <p className="muted" style={{ marginTop: '-0.5rem' }}>No KCs defined yet — add them in Manage Classes first.</p>
+                }
+
+                {/* Generation controls */}
+                <div className="student-gen-box">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 0 }}>
+                      Number of students:
+                      <input type="number" min="1" max="50" value={studentCount}
+                        onChange={e => setStudentCount(Math.max(1, Number(e.target.value)))}
+                        style={{ width: 70, margin: 0 }} />
+                    </label>
+                    <button onClick={handleGenerateStudents}>
+                      Generate {studentCount} Students
+                    </button>
+                    {studs.length > 0 && (
+                      <span className="muted">(replaces existing {studs.length})</span>
+                    )}
+                  </div>
+                  <label style={{ marginTop: '0.75rem', display: 'block' }}>
+                    Custom persona prompt (optional — applied to all levels)
+                    <textarea rows={3} value={studentPrompt} onChange={e => setStudentPrompt(e.target.value)}
+                      placeholder={'Leave blank to use built-in prompts per level.\nExample: "You are a student who always tries to relate concepts to real-world scenarios."'} />
+                  </label>
+                </div>
+
+                {/* Student list */}
+                {studs.length === 0
+                  ? <p className="muted">No students yet. Click Generate to create them.</p>
+                  : (
+                    <>
+                      <p className="muted" style={{ marginBottom: '0.75rem' }}>
+                        {studs.length} students &nbsp;·&nbsp;
+                        <span style={{ color: '#28a745' }}>{strong} strong</span> /&nbsp;
+                        <span style={{ color: '#0052d4' }}>{average} average</span> /&nbsp;
+                        <span style={{ color: '#fd7e14' }}>{weak} weak</span>
+                      </p>
+
+                      {studs.map(s => (
+                        <div key={s.id} className="student-item">
+                          {editingStudentId === s.id ? (
+                            <div className="student-edit-form">
+                              <label>Name
+                                <input type="text"
+                                  value={studentEdits.name ?? s.name}
+                                  onChange={e => setStudentEdits(p => ({ ...p, name: e.target.value }))} />
+                              </label>
+                              <label>Level
+                                <select value={studentEdits.level ?? s.level}
+                                  onChange={e => setStudentEdits(p => ({ ...p, level: e.target.value }))}>
+                                  <option value="strong">Strong</option>
+                                  <option value="average">Average</option>
+                                  <option value="weak">Weak</option>
+                                </select>
+                              </label>
+                              <label>Prompt
+                                <textarea rows={4}
+                                  value={studentEdits.prompt ?? s.prompt}
+                                  onChange={e => setStudentEdits(p => ({ ...p, prompt: e.target.value }))} />
+                              </label>
+                              {kcs.length > 0 && (
+                                <label>Assigned KCs
+                                  <div className="kc-checkbox-group">
+                                    {kcs.map(kc => {
+                                      const current = studentEdits.assignedKnowledgeComponents ?? s.assigned_kcs;
+                                      return (
+                                        <label key={kc.id} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', width: 'auto', margin: 0 }}>
+                                          <input type="checkbox"
+                                            checked={current.includes(kc.name)}
+                                            onChange={e => {
+                                              const base = studentEdits.assignedKnowledgeComponents ?? [...s.assigned_kcs];
+                                              setStudentEdits(p => ({
+                                                ...p,
+                                                assignedKnowledgeComponents: e.target.checked
+                                                  ? [...base, kc.name]
+                                                  : base.filter(n => n !== kc.name),
+                                              }));
+                                            }}
+                                          />
+                                          {kc.name}
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </label>
+                              )}
+                              <div className="action-row">
+                                <button onClick={() => handleSaveStudent(cls.id, s.id)}>Save</button>
+                                <button style={{ background: '#6c757d' }} onClick={() => { setEditingStudentId(null); setStudentEdits({}); }}>Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="student-header">
+                                <strong>{s.name}</strong>
+                                <span className={`level-badge level-${s.level}`}>{s.level}</span>
+                              </div>
+                              <p className="muted" style={{ margin: '0.25rem 0', fontSize: '0.85rem' }}>{s.prompt}</p>
+                              {s.assigned_kcs?.length > 0 && (
+                                <div className="student-kc-tags">
+                                  {s.assigned_kcs.map(name => (
+                                    <span key={name} className="student-kc-tag">{name}</span>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="action-row" style={{ marginTop: '0.5rem' }}>
+                                <button style={{ background: '#6c757d', padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                                  onClick={() => { setEditingStudentId(s.id); setStudentEdits({}); }}>Edit</button>
+                                <button className="btn-delete" onClick={() => handleDeleteStudent(cls.id, s.id)}>✕</button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  )
+                }
+              </>
+            )}
+          </section>
+        );
+      }
+
       default:
         return null;
     }
@@ -735,9 +1214,20 @@ function App() {
             <li><button onClick={() => setView('dashboard')}>Dashboard</button></li>
             <li><button onClick={() => setView('generation')}>Generate</button></li>
             <li><button onClick={() => setView('ai-question')} disabled={!question} title={!question ? 'Generate a question first' : ''}>AI Question</button></li>
+            <li><button onClick={() => setView('evaluation')} disabled={!question} title={!question ? 'Generate a question first' : ''}>Difficulty Eval</button></li>
             <li><button onClick={() => setView('review')} disabled={!questionId} title={!questionId ? 'Save a question to review first' : ''}>Review</button></li>
             <li><button onClick={() => { fetchBank(); setView('bank'); }}>Question Bank</button></li>
             <li><button onClick={() => { setError(''); setView('classes'); }}>Manage Classes</button></li>
+            <li><button onClick={() => {
+              setError('');
+              setView('students');
+              // initialise class selector to first class if not set
+              setStudentClassId(prev => {
+                const id = prev ?? (classes[0]?.id ?? null);
+                if (id) fetchStudents(id);
+                return id;
+              });
+            }}>Students</button></li>
           </ul>
         </nav>
       </header>

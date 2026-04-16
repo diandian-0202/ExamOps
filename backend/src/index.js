@@ -101,7 +101,7 @@ async function generateWithAI(env, { topic, objective, numDistractors, classId }
   const systemPrompt =
     'You are an expert CS exam question writer. ' +
     'When lecture notes are provided, base your question strictly on that content — do not invent facts. ' +
-    'When example exam questions are provided, match their difficulty level and question style. ' +
+    'When example exam questions are provided, match their difficulty level and question style. Make sure the question you give is not too basic, it should match past exams in difficulty but dont give the exact same question. ' +
     'Always respond with valid JSON only — no markdown fences, no text outside the JSON object.';
 
   const userPrompt =
@@ -159,6 +159,49 @@ async function generateWithAI(env, { topic, objective, numDistractors, classId }
   if (!parsed.explanation) parsed.explanation = '';
 
   return parsed;
+}
+
+// ─── Topic familiarity check ──────────────────────────────────────────────────
+
+/**
+ * Returns true if the question topic overlaps with any of the student's assigned KCs.
+ * Uses word-level substring matching in both directions.
+ */
+function isTopicFamiliar(topic, assignedKCs) {
+  if (!assignedKCs.length) return false;
+  const tWords = topic.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  return assignedKCs.some(kc => {
+    const k = kc.toLowerCase();
+    const kWords = k.split(/\s+/).filter(w => w.length > 2);
+    return kWords.some(w => tWords.includes(w)) || tWords.some(w => k.includes(w));
+  });
+}
+
+// ─── KC keyword matching ───────────────────────────────────────────────────────
+
+/**
+ * Score a text chunk against a knowledge component.
+ * Returns a value in [0, 1]: fraction of unique KC keywords found in the chunk.
+ */
+function scoreChunkAgainstKC(chunk, kc) {
+  const text = chunk.toLowerCase();
+  const aliases = typeof kc.aliases === 'string'
+    ? JSON.parse(kc.aliases || '[]')
+    : (kc.aliases || []);
+
+  const keywords = [
+    ...kc.name.split(/\s+/),
+    ...(kc.description || '').split(/\s+/),
+    ...aliases,
+  ]
+    .map(k => k.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter(k => k.length > 2);
+
+  const unique = [...new Set(keywords)];
+  if (unique.length === 0) return 0;
+
+  const hits = unique.reduce((n, kw) => n + (text.includes(kw) ? 1 : 0), 0);
+  return Math.round((hits / unique.length) * 100) / 100;
 }
 
 // ─── Text chunking (mirrors Python script logic) ───────────────────────────────
@@ -261,8 +304,22 @@ export default {
 
       // ── GET /api/classes ───────────────────────────────────────────────────
       if (method === 'GET' && pathname === '/api/classes') {
-        const { results } = await env.DB.prepare('SELECT * FROM classes ORDER BY id').all();
-        return json(results);
+        const { results: classes } = await env.DB.prepare('SELECT * FROM classes ORDER BY id').all();
+        const { results: kcs } = await env.DB.prepare('SELECT * FROM knowledge_components ORDER BY id').all();
+        const { results: chunkCounts } = await env.DB.prepare(
+          'SELECT kc_id, COUNT(*) as cnt FROM course_chunks WHERE kc_id IS NOT NULL GROUP BY kc_id'
+        ).all();
+        const countMap = {};
+        for (const row of chunkCounts) countMap[row.kc_id] = row.cnt;
+        const classesWithKCs = classes.map(cls => ({
+          ...cls,
+          kcs: kcs.filter(k => k.class_id === cls.id).map(k => ({
+            ...k,
+            aliases: JSON.parse(k.aliases || '[]'),
+            chunk_count: countMap[k.id] || 0,
+          })),
+        }));
+        return json(classesWithKCs);
       }
 
       // ── POST /api/classes ──────────────────────────────────────────────────
@@ -274,6 +331,81 @@ export default {
         const result = await env.DB.prepare('INSERT INTO classes (name) VALUES (?)').bind(name.trim()).run();
         const newClass = await env.DB.prepare('SELECT * FROM classes WHERE id = ?').bind(result.meta.last_row_id).first();
         return json(newClass, 201);
+      }
+
+      // ── POST /api/classes/:id/kc ──────────────────────────────────────────
+      const kcAddMatch = pathname.match(/^\/api\/classes\/(\d+)\/kc$/);
+      if (method === 'POST' && kcAddMatch) {
+        const classId = parseInt(kcAddMatch[1], 10);
+        const { name, description = '', aliases = [] } = await request.json();
+        if (!name || !name.trim()) return err('name is required');
+        const result = await env.DB.prepare(
+          'INSERT INTO knowledge_components (class_id, name, description, aliases) VALUES (?, ?, ?, ?)'
+        ).bind(classId, name.trim(), description.trim(), JSON.stringify(aliases)).run();
+        const kc = await env.DB.prepare('SELECT * FROM knowledge_components WHERE id = ?')
+          .bind(result.meta.last_row_id).first();
+        return json({ ...kc, aliases: JSON.parse(kc.aliases || '[]') }, 201);
+      }
+
+      // ── DELETE /api/classes/:id/kc/:kcId ─────────────────────────────────
+      const kcDeleteMatch = pathname.match(/^\/api\/classes\/(\d+)\/kc\/(\d+)$/);
+      if (method === 'DELETE' && kcDeleteMatch) {
+        const kcId = parseInt(kcDeleteMatch[2], 10);
+        await env.DB.prepare('DELETE FROM knowledge_components WHERE id = ?').bind(kcId).run();
+        return json({ success: true });
+      }
+
+      // ── GET /api/classes/:id/students ─────────────────────────────────────
+      const studentListMatch = pathname.match(/^\/api\/classes\/(\d+)\/students$/);
+      if (method === 'GET' && studentListMatch) {
+        const classId = parseInt(studentListMatch[1], 10);
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM students WHERE class_id = ? ORDER BY id'
+        ).bind(classId).all();
+        return json(results.map(s => ({ ...s, assigned_kcs: JSON.parse(s.assigned_kcs || '[]') })));
+      }
+
+      // ── POST /api/classes/:id/students/generate ────────────────────────────
+      const studentGenMatch = pathname.match(/^\/api\/classes\/(\d+)\/students\/generate$/);
+      if (method === 'POST' && studentGenMatch) {
+        const classId = parseInt(studentGenMatch[1], 10);
+        const { students: profiles } = await request.json();
+        if (!Array.isArray(profiles)) return err('students array is required');
+        await env.DB.prepare('DELETE FROM students WHERE class_id = ?').bind(classId).run();
+        for (const s of profiles) {
+          await env.DB.prepare(
+            'INSERT INTO students (class_id, name, level, prompt, assigned_kcs) VALUES (?, ?, ?, ?, ?)'
+          ).bind(
+            classId,
+            s.name,
+            s.level || 'average',
+            s.prompt || '',
+            JSON.stringify(s.assignedKnowledgeComponents || [])
+          ).run();
+        }
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM students WHERE class_id = ? ORDER BY id'
+        ).bind(classId).all();
+        return json(results.map(s => ({ ...s, assigned_kcs: JSON.parse(s.assigned_kcs || '[]') })));
+      }
+
+      // ── PUT / DELETE /api/classes/:id/students/:sid ────────────────────────
+      const studentCRUDMatch = pathname.match(/^\/api\/classes\/(\d+)\/students\/(\d+)$/);
+      if (studentCRUDMatch) {
+        const sid = parseInt(studentCRUDMatch[2], 10);
+        if (method === 'PUT') {
+          const { name, level, prompt, assignedKnowledgeComponents } = await request.json();
+          await env.DB.prepare(
+            'UPDATE students SET name = ?, level = ?, prompt = ?, assigned_kcs = ? WHERE id = ?'
+          ).bind(name, level, prompt || '', JSON.stringify(assignedKnowledgeComponents || []), sid).run();
+          const updated = await env.DB.prepare('SELECT * FROM students WHERE id = ?').bind(sid).first();
+          if (!updated) return err('Student not found', 404);
+          return json({ ...updated, assigned_kcs: JSON.parse(updated.assigned_kcs || '[]') });
+        }
+        if (method === 'DELETE') {
+          await env.DB.prepare('DELETE FROM students WHERE id = ?').bind(sid).run();
+          return json({ success: true });
+        }
       }
 
       // ── DELETE /api/classes/:id ───────────────────────────────────────────
@@ -303,13 +435,143 @@ export default {
           : null;
 
         const chunks = chunkText(text);
+
+        // Fetch KCs for this class for matching
+        const { results: kcs } = await env.DB.prepare(
+          'SELECT * FROM knowledge_components WHERE class_id = ?'
+        ).bind(classId).all();
+
+        const mappings = {}; // { kcName -> { component, matches[] } }
+        let unmatchedCount = 0;
+
         for (const chunk of chunks) {
+          let bestKC = null;
+          let bestScore = 0;
+
+          for (const kc of kcs) {
+            const score = scoreChunkAgainstKC(chunk, kc);
+            if (score > bestScore) { bestScore = score; bestKC = kc; }
+          }
+
+          const matched = bestKC && bestScore > 0;
+          const kcId = matched ? bestKC.id : null;
+
           await env.DB.prepare(
-            'INSERT INTO course_chunks (class_id, source, topic_tag, content) VALUES (?, ?, ?, ?)'
-          ).bind(classId, source, topicTag || null, chunk).run();
+            'INSERT INTO course_chunks (class_id, source, topic_tag, content, kc_id, kc_score) VALUES (?, ?, ?, ?, ?, ?)'
+          ).bind(classId, source, topicTag || null, chunk, kcId, matched ? bestScore : 0).run();
+
+          if (matched) {
+            if (!mappings[bestKC.name]) mappings[bestKC.name] = { component: bestKC.name, matches: [] };
+            mappings[bestKC.name].matches.push({
+              text: chunk.slice(0, 300) + (chunk.length > 300 ? '...' : ''),
+              score: bestScore,
+            });
+          } else {
+            unmatchedCount++;
+          }
         }
 
-        return json({ chunks_added: chunks.length, source, topic_tag: topicTag });
+        return json({
+          chunks_added: chunks.length,
+          source,
+          topic_tag: topicTag,
+          componentMappings: Object.values(mappings),
+          unmatched: unmatchedCount,
+        });
+      }
+
+      // ── POST /api/evaluate ─────────────────────────────────────────────────
+      if (method === 'POST' && pathname === '/api/evaluate') {
+        const { question, classId } = await request.json();
+        if (!question || !classId) return err('question and classId are required');
+
+        const { results: students } = await env.DB.prepare(
+          'SELECT * FROM students WHERE class_id = ? ORDER BY id'
+        ).bind(classId).all();
+
+        if (students.length === 0) {
+          return json({ results: [], difficultyLabel: 'N/A', score: null, correctCount: 0, total: 0 });
+        }
+
+        // Reserve API quota for all students upfront
+        const currentCount = await getCallCount(env.DB);
+        if (currentCount + students.length > API_CALL_LIMIT) {
+          return err(`Not enough API calls remaining (need ${students.length}, have ${API_CALL_LIMIT - currentCount})`);
+        }
+        await env.DB.prepare('UPDATE api_usage SET call_count = call_count + ? WHERE id = 1')
+          .bind(students.length).run();
+
+        const LEVEL_FALLBACK = {
+          strong:  'You are a strong student who reasons carefully and answers exam questions accurately.',
+          average: 'You are an average student who understands most material but sometimes makes mistakes.',
+          weak:    'You are a weak student who struggles with exam questions and often makes reasoning errors.',
+        };
+
+        const correctIdx = (question.options || []).findIndex(o => o.is_correct);
+        const correctLetter = correctIdx >= 0 ? String.fromCharCode(65 + correctIdx) : '?';
+        const optionsText = (question.options || [])
+          .map((o, i) => `${String.fromCharCode(65 + i)}. ${o.text}`)
+          .join('\n');
+
+        const studentResults = await Promise.all(students.map(async s => {
+          const assignedKCs = typeof s.assigned_kcs === 'string'
+            ? JSON.parse(s.assigned_kcs || '[]') : (s.assigned_kcs || []);
+          const familiar = isTopicFamiliar(question.topic || '', assignedKCs);
+
+          const systemPrompt = s.prompt || LEVEL_FALLBACK[s.level] || LEVEL_FALLBACK.average;
+          const familiarNote = familiar
+            ? `This question is about "${question.topic}", which is within your studied topics.`
+            : `This question is about "${question.topic}", which you have NOT studied. Answer as someone unfamiliar with this specific topic.`;
+
+          const userPrompt =
+            `${familiarNote}\n\nQuestion: ${question.question_text}\n${optionsText}\n\n` +
+            `Pick the best answer. Respond with valid JSON only:\n{"selected": "A", "reasoning": "one brief sentence"}`;
+
+          try {
+            const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+              },
+              body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user',   content: userPrompt },
+                ],
+                max_tokens: 120,
+                temperature: 0.7,
+                response_format: { type: 'json_object' },
+              }),
+            });
+            const aiData = await aiRes.json();
+            const parsed = JSON.parse(aiData.choices?.[0]?.message?.content || '{}');
+            const selected = ((parsed.selected || '').toUpperCase().charAt(0)) || '?';
+            const isCorrect = selected === correctLetter;
+            const outcome = !familiar ? 'unfamiliar' : isCorrect ? 'correct' : 'incorrect';
+            return {
+              studentId: s.id, studentName: s.name, level: s.level,
+              assignedKCs, familiar, selected,
+              reasoning: parsed.reasoning || '',
+              outcome,
+            };
+          } catch (e) {
+            return {
+              studentId: s.id, studentName: s.name, level: s.level,
+              assignedKCs, familiar, selected: '?',
+              reasoning: 'Simulation error: ' + e.message,
+              outcome: 'error',
+            };
+          }
+        }));
+
+        const correctCount = studentResults.filter(r => r.outcome === 'correct').length;
+        const total = studentResults.length;
+        const score = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+        const difficultyLabel = score >= 70 ? 'Easy' : score >= 30 ? 'Medium' : 'Hard';
+
+        return json({ results: studentResults, difficultyLabel, score, correctCount, total });
       }
 
       // ── GET /api/usage ──────────────────────────────────────────────────────
@@ -355,14 +617,15 @@ export default {
           explanation = '',
           status = 'draft',
           class_id = null,
+          difficulty = 'Unrated',
         } = body;
 
         if (!topic) return err('topic is required');
 
         const result = await env.DB.prepare(
           `INSERT INTO questions
-             (topic, objective, format, num_distractors, question_text, options, explanation, status, class_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             (topic, objective, format, num_distractors, question_text, options, explanation, status, class_id, difficulty)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
           .bind(
             topic,
@@ -373,7 +636,8 @@ export default {
             JSON.stringify(options),
             explanation,
             status,
-            class_id ? Number(class_id) : null
+            class_id ? Number(class_id) : null,
+            difficulty
           )
           .run();
 

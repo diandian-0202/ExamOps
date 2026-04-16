@@ -417,6 +417,57 @@ footer {
   font-size: 0.9rem;
 }
 
+/* ── Knowledge Components ──────────────────────────────────────────────── */
+.kc-section {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eee;
+}
+
+.kc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 1rem 0;
+}
+
+.kc-item {
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.kc-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.kc-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.kc-item .btn-delete {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+}
+
+.kc-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.kc-add-form input {
+  margin: 0;
+}
+
+.kc-add-form button {
+  align-self: flex-start;
+}
+
 .progress-bar-wrap {
   height: 6px;
   background: #e0e0e0;
@@ -429,5 +480,127 @@ footer {
   height: 100%;
   background: #0052d4;
   transition: width 0.15s ease;
+}
+
+/* ── Difficulty Evaluation ───────────────────────────────────────────── */
+.eval-question-box {
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1.1rem;
+}
+
+.eval-summary {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1.1rem;
+  background: #f0f4f8;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.difficulty-badge {
+  font-size: 1.2rem;
+  font-weight: 700;
+  padding: 0.25rem 1rem;
+  border-radius: 6px;
+  color: #fff;
+}
+
+.difficulty-Easy   { background: #28a745; }
+.difficulty-Medium { background: #fd7e14; }
+.difficulty-Hard   { background: #dc3545; }
+.difficulty-N\/A   { background: #888; }
+
+.eval-result-item {
+  display: flex;
+  gap: 1.5rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.eval-result-left  { flex: 1; }
+.eval-result-right { width: 200px; flex-shrink: 0; }
+
+.eval-outcome {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.outcome-correct    { color: #28a745; }
+.outcome-incorrect  { color: #dc3545; }
+.outcome-unfamiliar { color: #888; }
+.outcome-error      { color: #fd7e14; }
+
+/* ── Manage Students ─────────────────────────────────────────────────── */
+.student-gen-box {
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.student-item {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.student-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.3rem;
+}
+
+.level-badge {
+  border-radius: 12px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #fff;
+  text-transform: capitalize;
+}
+
+.level-strong  { background: #28a745; }
+.level-average { background: #0052d4; }
+.level-weak    { background: #fd7e14; }
+
+.student-kc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.student-kc-tag {
+  background: #e8f0fe;
+  color: #0052d4;
+  border-radius: 10px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.student-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.kc-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  background: #f8f9fa;
+  border-radius: 4px;
 }
 
